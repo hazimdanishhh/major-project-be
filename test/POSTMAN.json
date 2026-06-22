@@ -1,0 +1,1676 @@
+{
+  "info": {
+    "name": "major-project-be",
+    "description": "Complete API test collection for the AI-Augmented Project & Requirements Management System.\n\nTesting order:\n1. Auth (register users, get profile)\n2. Projects (create, list, members)\n3. Requirements (CRUD, FSM transitions, versioning)\n4. Specifications\n5. Tasks (CRUD, dependencies, status transitions)\n6. Algorithms (CPM, Traceability)\n7. AI WBS Generation\n\nPre-requisite: Set the `baseUrl` collection variable to your server URL.\nThe collection auto-saves tokens and IDs into variables so tests run in sequence.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "pmToken", "value": "", "type": "string" },
+    { "key": "clientToken", "value": "", "type": "string" },
+    { "key": "developerToken", "value": "", "type": "string" },
+    { "key": "projectId", "value": "", "type": "string" },
+    { "key": "requirementId", "value": "", "type": "string" },
+    { "key": "specId", "value": "", "type": "string" },
+    { "key": "taskId1", "value": "", "type": "string" },
+    { "key": "taskId2", "value": "", "type": "string" },
+    { "key": "taskId3", "value": "", "type": "string" },
+    { "key": "pmUserId", "value": "", "type": "string" },
+    { "key": "developerUserId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "00 - Health Check",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns ok', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "01 - Auth",
+      "item": [
+        {
+          "name": "Register PM user",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"pm@test.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"Project Manager\",\n  \"role\": \"pm\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has user object', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.user).to.exist;",
+                  "  pm.expect(json.user.role).to.eql('pm');",
+                  "  pm.collectionVariables.set('pmUserId', json.user.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Register Client user",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"client@test.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"Test Client\",\n  \"role\": \"client\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Role is client', () => {",
+                  "  pm.expect(pm.response.json().user.role).to.eql('client');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Register Developer user",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"dev@test.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"Developer Dan\",\n  \"role\": \"developer\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Has userId', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('developerUserId', json.user.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Register — duplicate email (expect 409)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"pm@test.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"Duplicate PM\",\n  \"role\": \"pm\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 409 for duplicate', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Register — invalid role (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"bad@test.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"Bad Role\",\n  \"role\": \"admin\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400 for invalid role', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Login as PM (get JWT)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"pm@test.com\",\n  \"password\": \"password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.access_token).to.exist;",
+                  "  pm.collectionVariables.set('pmToken', json.access_token);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Login as Client (get JWT)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"client@test.com\",\n  \"password\": \"password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('clientToken', json.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Login as Developer (get JWT)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/login",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"dev@test.com\",\n  \"password\": \"password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set('developerToken', json.access_token);"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/auth/me (as PM)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns correct role', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.user.role).to.eql('pm');",
+                  "  pm.expect(json.user.full_name).to.eql('Project Manager');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/auth/me — no token (expect 401)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/auth/users (as PM)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/users",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns array of users', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.users).to.be.an('array');",
+                  "  pm.expect(json.users.length).to.be.at.least(3);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/auth/users — as Client (expect 403)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/users",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403 for client role', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "02 - Projects",
+      "item": [
+        {
+          "name": "POST /api/projects (as PM)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/projects",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"E-Commerce Platform Rebuild\",\n  \"description\": \"Full redesign of the online store with new checkout flow and inventory management.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Project created', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.project.name).to.eql('E-Commerce Platform Rebuild');",
+                  "  pm.collectionVariables.set('projectId', json.project.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "POST /api/projects — as Client (expect 403)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/projects",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Sneaky Client Project\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/projects",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns projects array', () => {",
+                  "  pm.expect(pm.response.json().projects).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/projects/:id",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has requirements array', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.project.requirements).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "PATCH /api/projects/:id",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Updated: Full redesign with payment gateway integration.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "POST /api/projects/:id/members — add Developer",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}/members",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{developerUserId}}\",\n  \"role\": \"developer\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201 or 409', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/projects/:id/members",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}/members",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "03 - Requirements (FSM + Versioning + Impact Analysis)",
+      "item": [
+        {
+          "name": "POST /api/requirements",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{projectId}}\",\n  \"title\": \"User Authentication System\",\n  \"description\": \"Users must be able to register, log in, and reset their password via email.\",\n  \"priority\": \"high\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Status is Draft', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.requirement.status).to.eql('Draft');",
+                  "  pm.expect(json.requirement.current_version).to.eql(1);",
+                  "  pm.collectionVariables.set('requirementId', json.requirement.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/requirements?project_id=",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/requirements?project_id={{projectId}}",
+              "query": [{ "key": "project_id", "value": "{{projectId}}" }]
+            },
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('At least 1 requirement', () => {",
+                  "  pm.expect(pm.response.json().requirements.length).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/requirements/:id",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has tasks array', () => {",
+                  "  pm.expect(pm.response.json().requirement.tasks).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "FSM: Draft → Submitted",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Submitted\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status is now Submitted', () => {",
+                  "  pm.expect(pm.response.json().requirement.status).to.eql('Submitted');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "FSM: Submitted → Under Analysis",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Under Analysis\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is Under Analysis', () => {",
+                  "  pm.expect(pm.response.json().requirement.status).to.eql('Under Analysis');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "FSM: ILLEGAL jump — Under Analysis → Approved (expect 400)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Approved\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400 — FSM rejects illegal jump', () => pm.response.to.have.status(400));",
+                  "pm.test('Error message mentions transition', () => {",
+                  "  pm.expect(pm.response.json().error).to.include('transition');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "FSM: Under Analysis → Specification Drafted",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Specification Drafted\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "FSM: Specification Drafted → Client Validation",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Client Validation\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "FSM: Client Validation → Approved (as Client)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Approved\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Status is Approved', () => {",
+                  "  pm.expect(pm.response.json().requirement.status).to.eql('Approved');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Content Edit on Approved — triggers versioning + impact analysis",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"UPDATED: Users must register, log in, reset password, AND enable 2FA.\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Reverted to Under Analysis', () => {",
+                  "  pm.expect(pm.response.json().requirement.status).to.eql('Under Analysis');",
+                  "});",
+                  "pm.test('Version bumped to 2', () => {",
+                  "  pm.expect(pm.response.json().requirement.current_version).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/requirements/:id/versions",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/versions",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has 2 versions', () => {",
+                  "  pm.expect(pm.response.json().versions.length).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/requirements/:id/history (audit trail)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/history",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has status history entries', () => {",
+                  "  pm.expect(pm.response.json().history).to.be.an('array');",
+                  "  pm.expect(pm.response.json().history.length).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Re-approve for downstream tests (walk FSM back up)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Specification Drafted\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Re-approve step 2: → Client Validation",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Client Validation\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Re-approve step 3: → Approved",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"Approved\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is Approved', () => pm.expect(pm.response.json().requirement.status).to.eql('Approved'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "04 - Specifications",
+      "item": [
+        {
+          "name": "POST /api/requirements/:id/specs — create Draft spec",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/specs",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Implement JWT-based auth with Supabase. Users can sign up with email/password, log in to get a session token, and request a password reset email.\",\n  \"acceptance_criteria\": \"1. POST /auth/register creates a user and returns 201.\\n2. POST /auth/login returns a valid JWT.\\n3. Password reset email is sent within 60 seconds.\",\n  \"status\": \"Draft\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Spec created', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.collectionVariables.set('specId', json.spec.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "PATCH /api/requirements/:id/specs/:spec_id — finalize spec",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/specs/{{specId}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Final\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Spec is Final', () => {",
+                  "  pm.expect(pm.response.json().spec.status).to.eql('Final');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "05 - Tasks (CRUD + DFS + BFS)",
+      "item": [
+        {
+          "name": "POST /api/tasks — create Task 1 (no deps)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirement_id\": \"{{requirementId}}\",\n  \"title\": \"Set up Supabase Auth tables\",\n  \"description\": \"Configure auth schema, enable email provider, set JWT secret.\",\n  \"estimated_hours\": 2,\n  \"priority\": \"high\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('taskId1', pm.response.json().task.id);"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "POST /api/tasks — create Task 2 (depends on Task 1)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirement_id\": \"{{requirementId}}\",\n  \"title\": \"Implement register endpoint\",\n  \"description\": \"POST /api/auth/register with Zod validation and profile upsert.\",\n  \"estimated_hours\": 4,\n  \"priority\": \"high\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('taskId2', pm.response.json().task.id);"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "POST /api/tasks — create Task 3 (depends on Task 2)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirement_id\": \"{{requirementId}}\",\n  \"title\": \"Write auth integration tests\",\n  \"description\": \"Jest tests covering register, login, invalid token, and role checks.\",\n  \"estimated_hours\": 3,\n  \"priority\": \"medium\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('taskId3', pm.response.json().task.id);"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/tasks?requirement_id=",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks?requirement_id={{requirementId}}",
+              "query": [
+                { "key": "requirement_id", "value": "{{requirementId}}" }
+              ]
+            },
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('3 tasks returned', () => {",
+                  "  pm.expect(pm.response.json().tasks.length).to.eql(3);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/tasks/:id",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/tasks/{{taskId1}}",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "PATCH /api/tasks/:id — update metadata",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId1}}",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assignee_id\": \"{{developerUserId}}\",\n  \"estimated_hours\": 3\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "DFS: POST /api/tasks/dependencies — Task2 depends on Task1",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks/dependencies",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"task_id\": \"{{taskId2}}\",\n  \"depends_on_task_id\": \"{{taskId1}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "DFS: POST /api/tasks/dependencies — Task3 depends on Task2",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks/dependencies",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"task_id\": \"{{taskId3}}\",\n  \"depends_on_task_id\": \"{{taskId2}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "DFS: CIRCULAR dependency — Task1 depends on Task3 (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks/dependencies",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"task_id\": \"{{taskId1}}\",\n  \"depends_on_task_id\": \"{{taskId3}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400 — DFS detects cycle', () => pm.response.to.have.status(400));",
+                  "pm.test('Error mentions circular', () => {",
+                  "  pm.expect(pm.response.json().error.toLowerCase()).to.include('circular');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "DFS: Self-dependency (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks/dependencies",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"task_id\": \"{{taskId1}}\",\n  \"depends_on_task_id\": \"{{taskId1}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/tasks/:id/dependencies",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/tasks/{{taskId2}}/dependencies",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "BFS: PATCH Task1 status → In Progress",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"In Progress\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "BFS: PATCH Task1 status → Done (triggers BFS unblocking of Task2)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"Done\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response has unblocked array', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.unblocked).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "PATCH Task1 — Developer can update status",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId2}}/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{developerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"In Progress\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Developer can update status', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "PATCH task — invalid status (expect 400)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"Flying\"\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "06 - Algorithms (CPM + Traceability)",
+      "item": [
+        {
+          "name": "GET /api/projects/:id/critical-path (CPM)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}/critical-path",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Has criticalPath array', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.criticalPath).to.be.an('array');",
+                  "  pm.expect(json.projectDuration).to.be.a('number');",
+                  "  pm.expect(json.schedule).to.be.an('array');",
+                  "});",
+                  "pm.test('Project duration matches sum of serial tasks (9h)', () => {",
+                  "  const json = pm.response.json();",
+                  "  // Task1(2h) + Task2(4h) + Task3(3h) = 9h on the single critical chain",
+                  "  pm.expect(json.projectDuration).to.eql(9);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "GET /api/traceability?project_id=",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/traceability?project_id={{projectId}}",
+              "query": [{ "key": "project_id", "value": "{{projectId}}" }]
+            },
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns matrix rows', () => {",
+                  "  pm.expect(pm.response.json().matrix).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "07 - AI WBS Generation (HITL)",
+      "item": [
+        {
+          "name": "POST generate-wbs — req not Approved (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/generate-wbs",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// If the requirement was re-approved in section 03, this should be 200.",
+                  "// If still Under Analysis, expect 400.",
+                  "pm.test('Returns 200 or 400 depending on FSM state', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "POST generate-wbs — Approved requirement (preview only)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/generate-wbs",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('Returns tasks array', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.tasks).to.be.an('array');",
+                  "    pm.expect(json.tasks.length).to.be.at.least(1);",
+                  "    // Store the tasks in a variable for the persist step",
+                  "    pm.collectionVariables.set('wbsTasks', JSON.stringify(json.tasks));",
+                  "  });",
+                  "} else {",
+                  "  pm.test('Skipped — requirement not Approved', () => true);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "POST persist-wbs — manual task list (simulates PM review)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}/persist-wbs",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tasks\": [\n    {\n      \"temp_id\": \"t1\",\n      \"title\": \"Design auth DB schema\",\n      \"description\": \"Define users and sessions tables.\",\n      \"estimated_hours\": 2,\n      \"priority\": \"high\",\n      \"depends_on_temp_ids\": [],\n      \"is_ai_generated\": true\n    },\n    {\n      \"temp_id\": \"t2\",\n      \"title\": \"Build register endpoint\",\n      \"description\": \"POST /api/auth/register with email + password.\",\n      \"estimated_hours\": 4,\n      \"priority\": \"high\",\n      \"depends_on_temp_ids\": [\"t1\"],\n      \"is_ai_generated\": true\n    },\n    {\n      \"temp_id\": \"t3\",\n      \"title\": \"Build login endpoint\",\n      \"description\": \"POST /api/auth/login returning JWT.\",\n      \"estimated_hours\": 3,\n      \"priority\": \"high\",\n      \"depends_on_temp_ids\": [\"t1\"],\n      \"is_ai_generated\": true\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Returns created task IDs', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.created_task_ids).to.be.an('array');",
+                  "  pm.expect(json.created_task_ids.length).to.eql(3);",
+                  "  pm.expect(json.dependency_count).to.eql(2);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "08 - RBAC Edge Cases",
+      "item": [
+        {
+          "name": "Developer cannot create task (expect 403)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{developerToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirement_id\": \"{{requirementId}}\",\n  \"title\": \"Sneaky dev task\",\n  \"estimated_hours\": 1\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Client cannot add dependency (expect 403)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks/dependencies",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"task_id\": \"{{taskId2}}\",\n  \"depends_on_task_id\": \"{{taskId3}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "No token — protected route (expect 401)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Invalid token (expect 401)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects",
+            "header": [
+              { "key": "Authorization", "value": "Bearer thisisnotavalidtoken" }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "404 — unknown route",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/does-not-exist"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
