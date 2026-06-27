@@ -31,6 +31,63 @@ export async function listProjects(req, res, next) {
   }
 }
 
+// GET ALL PROJECTS (Paginated, Searchable, Filtered)
+export async function listProjectsPaginated(req, res, next) {
+  try {
+    // 1. Extract the query parameters sent by the frontend
+    const {
+      page = 1,
+      pageSize = 20,
+      search,
+      sortBy = "created_at",
+      sortOrder = "descending",
+      ...filters // Any remaining parameters (like status=ACTIVE) are captured here
+    } = req.query;
+
+    // 2. Calculate Supabase range for pagination
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    // 3. Initialize the base query
+    let query = supabase.from("projects").select(
+      `id, name, description, status, created_at,
+         owner:profiles!projects_pm_id_fkey(id, full_name, role),
+         client:profiles!projects_client_id_fkey(id, full_name, role)`,
+      { count: "exact" },
+    );
+
+    // 4. Apply Search (searches name OR description)
+    if (search) {
+      query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
+    }
+
+    // 5. Apply Dynamic Filters (e.g., ?status=ACTIVE or ?client_id=123)
+    Object.entries(filters).forEach(([key, value]) => {
+      if (value !== undefined && value !== "") {
+        query = query.eq(key, value);
+      }
+    });
+
+    // 6. Apply Sorting and Pagination
+    query = query
+      .order(sortBy, { ascending: sortOrder === "ascending" })
+      .range(from, to);
+
+    // 7. Execute the query
+    const { data, count, error } = await query;
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    // 8. Return exactly what usePaginatedQuery expects!
+    res.json({
+      data, // The array of projects
+      totalCount: count, // The exact count for pagination math
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // CREATE NEW PROJECT
 export async function createProject(req, res, next) {
   try {

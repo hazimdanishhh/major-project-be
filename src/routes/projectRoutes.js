@@ -26,6 +26,7 @@ import {
   getProject,
   updateProject,
   deleteProject,
+  listProjectsPaginated,
   // listMembers,
   // addMember,
 } from "../controllers/projectController.js";
@@ -71,7 +72,8 @@ const PersistGlobalWBSSchema = z.object({
 
 router.use(requireAuth);
 
-router.get("/", listProjects);
+// router.get("/", listProjects);
+router.get("/", listProjectsPaginated);
 router.post(
   "/",
   requireRole("pm"),
