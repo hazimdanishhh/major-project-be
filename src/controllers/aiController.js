@@ -107,6 +107,37 @@ export async function persistWBS(req, res, next) {
       return res.status(400).json({ error: "tasks array is required." });
     }
 
+    // 0. Verify every requirement_id in the payload belongs to THIS project,
+    // and capture each one's current status for the FSM-gated advance below.
+    const incomingReqIds = [
+      ...new Set(tasks.map((t) => t.requirement_id).filter(Boolean)),
+    ];
+
+    const { data: projectReqs, error: reqCheckErr } = await supabase
+      .from("requirements")
+      .select("id, status")
+      .eq("project_id", projectId)
+      .in("id", incomingReqIds);
+
+    if (reqCheckErr) {
+      return res.status(500).json({ error: reqCheckErr.message });
+    }
+
+    const reqStatusMap = new Map(
+      (projectReqs || []).map((r) => [r.id, r.status]),
+    );
+    const invalidReqIds = incomingReqIds.filter(
+      (rid) => !reqStatusMap.has(rid),
+    );
+
+    if (invalidReqIds.length > 0) {
+      return res.status(400).json({
+        error:
+          `The following requirement_id(s) do not belong to project ${projectId}: ` +
+          invalidReqIds.join(", "),
+      });
+    }
+
     const idMap = {};
 
     // 1. Insert tasks
@@ -172,27 +203,43 @@ export async function persistWBS(req, res, next) {
           .json({ error: `Deps failed: ${depErr.message}` });
     }
 
-    // 3. Advance statuses for all affected requirements
-    const uniqueReqIds = [
-      ...new Set(tasks.map((t) => t.requirement_id).filter(Boolean)),
-    ];
+    // 3. Advance status only for requirements that are currently APPROVED,
+    // routed through the FSM validator for consistency with
+    // requirementController.updateRequirement, and only record audit
+    // history for requirements that actually transitioned.
+    const auditRows = [];
 
-    if (uniqueReqIds.length > 0) {
-      await supabase
+    for (const reqId of incomingReqIds) {
+      const currentStatus = reqStatusMap.get(reqId);
+      if (currentStatus !== "APPROVED") continue; // nothing to advance
+
+      try {
+        validateTransition(currentStatus, "IMPLEMENTATION");
+      } catch {
+        continue; // defensive; should be unreachable given the guard above
+      }
+
+      const { data: updatedRows, error: updateErr } = await supabase
         .from("requirements")
         .update({
           status: "IMPLEMENTATION",
           updated_at: new Date().toISOString(),
         })
-        .in("id", uniqueReqIds)
-        .eq("status", "APPROVED");
+        .eq("id", reqId)
+        .eq("status", "APPROVED") // re-check at write time to avoid a race
+        .select("id");
 
-      const auditRows = uniqueReqIds.map((reqId) => ({
+      if (updateErr || !updatedRows || updatedRows.length === 0) continue; // 0 rows changed — skip history
+
+      auditRows.push({
         requirement_id: reqId,
         old_status: "APPROVED",
         new_status: "IMPLEMENTATION",
         changed_by: req.user.id,
-      }));
+      });
+    }
+
+    if (auditRows.length > 0) {
       await supabase.from("requirement_status_history").insert(auditRows);
     }
 

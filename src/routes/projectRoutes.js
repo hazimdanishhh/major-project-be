@@ -3,13 +3,14 @@
  *
  * All routes require authentication.
  *
+ * Visibility: pm sees projects where pm_id = them; client sees projects where
+ * client_id = them; member sees projects where they're assigned a task.
+ *
  * GET    /api/projects
  * POST   /api/projects              pm only
  * GET    /api/projects/:id
  * PATCH  /api/projects/:id          pm only
  * DELETE /api/projects/:id          pm only
- * GET    /api/projects/:id/members
- * POST   /api/projects/:id/members  pm only
  * GET    /api/projects/:id/critical-path
  * POST   /api/projects/:id/generate-wbs   pm only, AI-rate-limited
  * POST   /api/projects/:id/persist-wbs    pm only
@@ -21,14 +22,11 @@ import { z } from "zod";
 import validate from "../middleware/validate.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
 import {
-  listProjects,
   createProject,
   getProject,
   updateProject,
   deleteProject,
   listProjectsPaginated,
-  // listMembers,
-  // addMember,
 } from "../controllers/projectController.js";
 import { criticalPath } from "../controllers/algorithmController.js";
 import { aiLimiter } from "../middleware/rateLimiter.js";
@@ -44,12 +42,18 @@ const UpdateProjectSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().optional(),
   status: z.enum(["ACTIVE", "ON_HOLD", "COMPLETED", "ARCHIVED"]).optional(),
+  client_id: z.string().uuid().optional(),
 });
 
-const AddMemberSchema = z.object({
-  user_id: z.string().uuid(),
-  role: z.enum(["client", "pm", "member"]),
-});
+const ListProjectsQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(20),
+    search: z.string().max(200).optional(),
+    sortBy: z.enum(["name", "status", "created_at"]).default("created_at"),
+    sortOrder: z.enum(["ascending", "descending"]).default("descending"),
+  })
+  .passthrough(); // lets ?status=ACTIVE-style dynamic filters keep flowing through
 
 const PersistGlobalWBSSchema = z.object({
   tasks: z
@@ -72,8 +76,7 @@ const PersistGlobalWBSSchema = z.object({
 
 router.use(requireAuth);
 
-// router.get("/", listProjects);
-router.get("/", listProjectsPaginated);
+router.get("/", validate(ListProjectsQuerySchema, "query"), listProjectsPaginated);
 router.post(
   "/",
   requireRole("pm"),
@@ -104,14 +107,6 @@ router.post(
   validate(PersistGlobalWBSSchema),
   persistWBS,
 );
-
-// router.get("/:id/members", listMembers);
-// router.post(
-//   "/:id/members",
-//   requireRole("pm"),
-//   validate(AddMemberSchema),
-//   addMember,
-// );
 
 // CPM — available to all authenticated roles
 router.get("/:id/critical-path", criticalPath);

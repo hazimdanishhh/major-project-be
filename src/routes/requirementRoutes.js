@@ -20,7 +20,6 @@ const router = express.Router();
 import { z } from "zod";
 import validate from "../middleware/validate.js";
 import { requireAuth, requireRole } from "../middleware/auth.js";
-// import { aiLimiter } from "../middleware/rateLimiter.js";
 
 import {
   listRequirements,
@@ -33,8 +32,6 @@ import {
   createSpec,
   updateSpec,
 } from "../controllers/requirementController.js";
-
-// import { generateWBSPreview, persistWBS } from "../controllers/aiController.js";
 
 // ─── Validation schemas ───────────────────────────────────────────────────────
 
@@ -69,23 +66,6 @@ const SpecSchema = z.object({
   status: z.enum(["DRAFT", "FINAL"]).optional(),
 });
 
-// const PersistWBSSchema = z.object({
-//   tasks: z
-//     .array(
-//       z.object({
-//         temp_id: z.string(),
-//         title: z.string().min(1),
-//         description: z.string().optional(),
-//         assignee_id: z.string().uuid().optional().nullable(),
-//         estimated_hours: z.number().int().min(0).optional(),
-//         priority: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional(),
-//         depends_on_temp_ids: z.array(z.string()).optional(),
-//         is_ai_generated: z.boolean().optional(),
-//       }),
-//     )
-//     .min(1),
-// });
-
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 router.use(requireAuth);
@@ -119,19 +99,5 @@ router.patch(
   validate(SpecSchema.partial()),
   updateSpec,
 );
-
-// AI WBS
-// router.post(
-//   "/:id/generate-wbs",
-//   requireRole("pm"),
-//   aiLimiter,
-//   generateWBSPreview,
-// );
-// router.post(
-//   "/:id/persist-wbs",
-//   requireRole("pm"),
-//   validate(PersistWBSSchema),
-//   persistWBS,
-// );
 
 export default router;

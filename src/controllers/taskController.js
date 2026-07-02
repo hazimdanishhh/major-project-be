@@ -122,6 +122,30 @@ export async function getTask(req, res, next) {
 export async function updateTask(req, res, next) {
   try {
     const { id } = req.params;
+
+    // Members may only edit tasks assigned to them; pm is exempt.
+    if (req.user.role === "member") {
+      const { data: current, error: fetchErr } = await supabase
+        .from("tasks")
+        .select("assignee_id")
+        .eq("id", id)
+        .single();
+
+      if (fetchErr || !current) {
+        return res.status(404).json({ error: "Task not found." });
+      }
+      if (current.assignee_id !== req.user.id) {
+        return res.status(403).json({
+          error: "Access denied. You can only edit tasks assigned to you.",
+        });
+      }
+      if (req.body.assignee_id !== undefined) {
+        return res.status(403).json({
+          error: "Access denied. Only a pm can reassign a task.",
+        });
+      }
+    }
+
     const {
       title,
       description,
@@ -178,12 +202,20 @@ export async function updateTaskStatus(req, res, next) {
     // Fetch current task to enforce transition rules
     const { data: current, error: fetchErr } = await supabase
       .from("tasks")
-      .select("status")
+      .select("status, assignee_id")
       .eq("id", id)
       .single();
 
     if (fetchErr || !current)
       return res.status(404).json({ error: "Task not found." });
+
+    // Members may only transition tasks assigned to them; pm is exempt.
+    if (req.user.role === "member" && current.assignee_id !== req.user.id) {
+      return res.status(403).json({
+        error:
+          "Access denied. You can only update the status of tasks assigned to you.",
+      });
+    }
 
     // ── Status transition guards ──────────────────────────────────────────
 

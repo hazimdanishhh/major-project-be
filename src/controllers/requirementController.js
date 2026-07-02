@@ -43,7 +43,8 @@ export async function listRequirements(req, res, next) {
       .from("requirements")
       .select(
         `id, title, description, status, current_version, created_at, updated_at,
-         created_by:profiles!requirements_created_by_fkey(id, full_name)`,
+         created_by:profiles!requirements_created_by_fkey(id, full_name),
+         requirement_specifications(*)`,
       )
       .order("created_at", { ascending: false });
 

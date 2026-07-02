@@ -36,10 +36,14 @@ export async function register(req, res, next) {
       });
 
     if (authError) {
-      const status = authError.message.includes("already registered")
-        ? 409
-        : 400;
-      return res.status(status).json({ error: authError.message });
+      // Supabase's exact wording has changed before ("already registered" vs
+      // "has already been registered") — match loosely on both keywords
+      // rather than an exact phrase so this doesn't silently break again.
+      const lower = authError.message.toLowerCase();
+      const isDuplicate = lower.includes("already") && lower.includes("regist");
+      return res
+        .status(isDuplicate ? 409 : 400)
+        .json({ error: authError.message });
     }
 
     const userId = authData.user.id;

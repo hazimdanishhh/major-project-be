@@ -4,8 +4,8 @@
  * GET    /api/tasks?requirement_id=&status=&assignee_id=
  * POST   /api/tasks                           pm only
  * GET    /api/tasks/:id
- * PATCH  /api/tasks/:id                       pm, member
- * PATCH  /api/tasks/:id/status                all authenticated
+ * PATCH  /api/tasks/:id                       pm, member (member: only tasks assigned to them)
+ * PATCH  /api/tasks/:id/status                pm, member (member: only tasks assigned to them)
  * DELETE /api/tasks/:id                       pm only
  *
  * GET    /api/tasks/dependencies?task_id=     (top-level, requires query param)
@@ -90,7 +90,12 @@ router.patch(
   validate(UpdateTaskSchema),
   updateTask,
 );
-router.patch("/:id/status", validate(UpdateStatusSchema), updateTaskStatus);
+router.patch(
+  "/:id/status",
+  requireRole("pm", "member"),
+  validate(UpdateStatusSchema),
+  updateTaskStatus,
+);
 router.delete("/:id", requireRole("pm"), deleteTask);
 
 router.get("/:id/dependencies", listDependencies); // uses req.params.id
