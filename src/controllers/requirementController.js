@@ -22,7 +22,16 @@
  *   UNDER_ANALYSIS or SPECIFICATION_DRAFTED — the states where analysis work
  *   is actively being done. Creating a spec at DRAFT/SUBMITTED makes no
  *   process sense, and creating one at APPROVED/IMPLEMENTATION would bypass
- *   the review cycle.
+ *   the review cycle. A requirement may carry multiple specifications, and
+ *   multiple FINAL specs at once is expected (generate-wbs aggregates all of
+ *   them), not a data-integrity gap.
+ *
+ *   Specification status (DRAFT/FINAL) is system-managed, not a client-
+ *   settable field: it auto-promotes to FINAL when the requirement advances
+ *   SPECIFICATION_DRAFTED → CLIENT_VALIDATION, and auto-reverts to DRAFT
+ *   whenever the requirement lands back on UNDER_ANALYSIS (client rejection
+ *   at CLIENT_VALIDATION, or the auto-revert below) — see Step 5 of
+ *   updateRequirement.
  *
  *   Content edits on APPROVED/IMPLEMENTATION requirements trigger:
  *     1. Status revert to UNDER_ANALYSIS
@@ -265,6 +274,28 @@ export async function updateRequirement(req, res, next) {
       });
     }
 
+    // ── Step 5: Spec status auto-sync ───────────────────────────────────────
+    // Specification status is system-managed, not manually edited: entering
+    // CLIENT_VALIDATION means analysis is done, so every DRAFT spec is
+    // finalized; landing back on UNDER_ANALYSIS (client rejection, or the
+    // APPROVED/IMPLEMENTATION content-edit auto-revert above) means analysis
+    // is being redone, so every FINAL spec reverts to DRAFT for reconfirmation.
+    if (targetStatus !== current.status) {
+      if (targetStatus === "CLIENT_VALIDATION") {
+        await supabase
+          .from("requirement_specifications")
+          .update({ status: "FINAL", updated_at: new Date().toISOString() })
+          .eq("requirement_id", id)
+          .eq("status", "DRAFT");
+      } else if (targetStatus === "UNDER_ANALYSIS") {
+        await supabase
+          .from("requirement_specifications")
+          .update({ status: "DRAFT", updated_at: new Date().toISOString() })
+          .eq("requirement_id", id)
+          .eq("status", "FINAL");
+      }
+    }
+
     res.json({ requirement: updated });
   } catch (err) {
     next(err);
@@ -423,13 +454,8 @@ const SPEC_ALLOWED_STATUSES = ["UNDER_ANALYSIS", "SPECIFICATION_DRAFTED"];
 export async function createSpec(req, res, next) {
   try {
     const { id: requirement_id } = req.params;
-    const {
-      title,
-      description,
-      acceptance_criteria,
-      complexity_score,
-      status,
-    } = req.body;
+    const { title, description, acceptance_criteria, complexity_score } =
+      req.body;
 
     // Verify the requirement exists and is in an analysis-phase state
     const { data: requirement, error: reqErr } = await supabase
@@ -455,6 +481,9 @@ export async function createSpec(req, res, next) {
       });
     }
 
+    // status is always DRAFT on creation — it's system-managed, promoted to
+    // FINAL only when the parent requirement advances to CLIENT_VALIDATION
+    // (see updateRequirement's spec auto-sync).
     const { data, error } = await supabase
       .from("requirement_specifications")
       .insert({
@@ -463,7 +492,7 @@ export async function createSpec(req, res, next) {
         description,
         acceptance_criteria,
         complexity_score,
-        status: status || "DRAFT",
+        status: "DRAFT",
         created_by: req.user.id,
       })
       .select()
@@ -479,13 +508,8 @@ export async function createSpec(req, res, next) {
 export async function updateSpec(req, res, next) {
   try {
     const { id: requirement_id, spec_id } = req.params;
-    const {
-      title,
-      description,
-      acceptance_criteria,
-      complexity_score,
-      status,
-    } = req.body;
+    const { title, description, acceptance_criteria, complexity_score } =
+      req.body;
 
     // Verify the requirement exists and is in an analysis-phase state
     const { data: requirement, error: reqErr } = await supabase
@@ -525,6 +549,8 @@ export async function updateSpec(req, res, next) {
       });
     }
 
+    // status is not accepted here — it's system-managed (see
+    // updateRequirement's spec auto-sync), not editable via this endpoint.
     const updates = { updated_at: new Date().toISOString() };
     if (title !== undefined) updates.title = title;
     if (description !== undefined) updates.description = description;
@@ -532,7 +558,6 @@ export async function updateSpec(req, res, next) {
       updates.acceptance_criteria = acceptance_criteria;
     if (complexity_score !== undefined)
       updates.complexity_score = complexity_score;
-    if (status !== undefined) updates.status = status;
 
     const { data, error } = await supabase
       .from("requirement_specifications")

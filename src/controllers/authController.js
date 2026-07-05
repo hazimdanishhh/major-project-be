@@ -4,6 +4,7 @@
  * Handles the server-side parts of authentication:
  *   - POST /api/auth/register  — creates a Supabase auth user AND the profile row
  *   - GET  /api/auth/me        — returns the current user's profile
+ *   - POST /api/auth/team      — pm-only: creates a pm/member account
  *
  * Note: login/logout are handled entirely by the Supabase client SDK on the
  * frontend. The backend only needs register (to set the role in profiles) and
@@ -11,6 +12,7 @@
  */
 
 import supabase from "../config/supabase.js";
+import { createAccount, generateTempPassword } from "../services/accountService.js";
 
 /**
  * POST /api/auth/register
@@ -18,63 +20,51 @@ import supabase from "../config/supabase.js";
  *
  * This endpoint only ever creates CLIENT accounts — role is hardcoded, not
  * read from the request body, so no input can influence it. pm/member
- * accounts are provisioned outside the app (see PROCESS_FLOW.md).
- *
- * Creates the auth user, then inserts into profiles.
- * The handle_new_user() trigger in Supabase also fires,
- * but we insert explicitly here so registration is atomic
- * and role validation happens in code, not just the DB check constraint.
+ * accounts are created via POST /api/auth/team (pm-only) or, for the very
+ * first pm, scripts/manageAccount.js (see PROCESS_FLOW.md).
  */
 export async function register(req, res, next) {
   try {
     const { email, password, full_name } = req.body;
-    const role = "client";
 
-    // 1. Create the Supabase auth user via admin API (service-role can do this)
-    const { data: authData, error: authError } =
-      await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true, // skip email confirmation for dev/demo
-        user_metadata: { full_name, role },
-      });
-
-    if (authError) {
-      // Supabase's exact wording has changed before ("already registered" vs
-      // "has already been registered") — match loosely on both keywords
-      // rather than an exact phrase so this doesn't silently break again.
-      const lower = authError.message.toLowerCase();
-      const isDuplicate = lower.includes("already") && lower.includes("regist");
-      return res
-        .status(isDuplicate ? 409 : 400)
-        .json({ error: authError.message });
-    }
-
-    const userId = authData.user.id;
-
-    // 2. Upsert the profiles row (the trigger may have already created it).
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .upsert({ id: userId, full_name, role }, { onConflict: "id" })
-      .select()
-      .single();
-
-    if (profileError) {
-      // Auth user was created — clean up to avoid orphaned auth entries.
-      await supabase.auth.admin.deleteUser(userId);
-      return res.status(500).json({ error: "Failed to create user profile." });
-    }
+    const user = await createAccount({ email, password, full_name, role: "client" });
 
     res.status(201).json({
       message: "User registered successfully.",
-      user: {
-        id: userId,
-        email,
-        full_name: profile.full_name,
-        role: profile.role,
-      },
+      user,
     });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    if (err.message === "Failed to create user profile.") {
+      return res.status(500).json({ error: err.message });
+    }
+    next(err);
+  }
+}
+
+/**
+ * POST /api/auth/team
+ * Body: { email, full_name, role: "pm" | "member" }
+ *
+ * pm-only. Creates a pm or member account with a system-generated password
+ * (there's no email/SMTP infrastructure in this project to invite users by
+ * link, and having the PM choose another person's password is weaker
+ * practice) — the password is returned once in the response and never
+ * persisted anywhere beyond the Supabase Auth record itself.
+ */
+export async function createTeamMember(req, res, next) {
+  try {
+    const { email, full_name, role } = req.body;
+    const password = generateTempPassword();
+
+    const user = await createAccount({ email, password, full_name, role });
+
+    res.status(201).json({ user, temporary_password: password });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    if (err.message === "Failed to create user profile.") {
+      return res.status(500).json({ error: err.message });
+    }
     next(err);
   }
 }

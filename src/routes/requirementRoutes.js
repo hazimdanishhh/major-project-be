@@ -58,12 +58,13 @@ const UpdateRequirementSchema = z.object({
     .optional(),
 });
 
+// status is system-managed (see updateRequirement's spec auto-sync) —
+// not a client-settable field.
 const SpecSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().min(1),
   acceptance_criteria: z.string().optional(),
   complexity_score: z.number().int().min(0).max(10).optional(),
-  status: z.enum(["DRAFT", "FINAL"]).optional(),
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
