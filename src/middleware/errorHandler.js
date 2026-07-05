@@ -14,7 +14,7 @@ import { ZodError } from "zod";
 /**
  * 404 — route not matched by any router
  */
-export function notFound(req, res, next) {
+export function notFound(req, res) {
   res.status(404).json({
     error: `Route not found: ${req.method} ${req.originalUrl}`,
   });

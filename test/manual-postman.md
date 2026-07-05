@@ -6,12 +6,13 @@
 
 ```json
 {
-  "email": "pm@test.com",
-  "password": "password123",
-  "full_name": "Project Manager",
-  "role": "pm"
+  "email": "client@test.com",
+  "password": "Passw0rd!2024",
+  "full_name": "Test Client"
 }
 ```
+
+Registration always creates a `client` account — there is no `role` field in the request; the backend hardcodes it server-side. `pm`/`member` accounts must already exist (provisioned out-of-band) to log in as one below.
 
 ## Login
 
@@ -19,8 +20,8 @@
 
 ```json
 {
-  "email": "pm@test.com",
-  "password": "password123"
+  "email": "client@test.com",
+  "password": "Passw0rd!2024"
 }
 ```
 
