@@ -120,7 +120,7 @@ export async function persistWBS(req, res, next) {
       .in("id", incomingReqIds);
 
     if (reqCheckErr) {
-      return res.status(500).json({ error: reqCheckErr.message });
+      return next(reqCheckErr);
     }
 
     const reqStatusMap = new Map(
@@ -138,37 +138,40 @@ export async function persistWBS(req, res, next) {
       });
     }
 
-    const idMap = {};
-
-    // 1. Insert tasks
-    for (const t of tasks) {
-      // Check both temp dependencies AND existing dependencies
+    // 1. Insert all tasks in a single bulk insert — one INSERT statement is
+    // atomic, so either every task is created or none are (no orphaned
+    // partial-WBS rows if one task's data is bad).
+    const taskRows = tasks.map((t) => {
       const hasDependencies =
         (t.depends_on_temp_ids && t.depends_on_temp_ids.length > 0) ||
         (t.depends_on_existing_task_ids &&
           t.depends_on_existing_task_ids.length > 0);
 
-      const { data, error } = await supabase
-        .from("tasks")
-        .insert({
-          requirement_id: t.requirement_id,
-          title: t.title,
-          description: t.description || null,
-          assignee_id: t.assignee_id || null,
-          estimated_hours: t.estimated_hours || 0,
-          priority: t.priority || "MEDIUM",
-          status: hasDependencies ? "BLOCKED" : "TO_DO",
-          is_ai_generated: t.is_ai_generated ?? true,
-        })
-        .select("id")
-        .single();
+      return {
+        requirement_id: t.requirement_id,
+        title: t.title,
+        description: t.description || null,
+        assignee_id: t.assignee_id || null,
+        estimated_hours: t.estimated_hours || 0,
+        priority: t.priority || "MEDIUM",
+        status: hasDependencies ? "BLOCKED" : "TO_DO",
+        is_ai_generated: t.is_ai_generated ?? true,
+      };
+    });
 
-      if (error)
-        return res
-          .status(500)
-          .json({ error: `Insert failed: ${error.message}` });
-      idMap[t.temp_id] = data.id;
-    }
+    const { data: insertedTasks, error: insertErr } = await supabase
+      .from("tasks")
+      .insert(taskRows)
+      .select("id");
+
+    if (insertErr) return next(insertErr);
+
+    // A single multi-row INSERT ... RETURNING preserves the order of the
+    // VALUES list, so zipping by index is safe.
+    const idMap = {};
+    tasks.forEach((t, i) => {
+      idMap[t.temp_id] = insertedTasks[i].id;
+    });
 
     // 2. Insert dependencies
     const depRows = [];
@@ -197,10 +200,7 @@ export async function persistWBS(req, res, next) {
       const { error: depErr } = await supabase
         .from("task_dependencies")
         .insert(depRows);
-      if (depErr)
-        return res
-          .status(500)
-          .json({ error: `Deps failed: ${depErr.message}` });
+      if (depErr) return next(depErr);
     }
 
     // 3. Advance status only for requirements that are currently APPROVED,

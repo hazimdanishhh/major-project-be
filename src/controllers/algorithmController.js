@@ -10,6 +10,7 @@
 
 import supabase from "../config/supabase.js";
 import { calculateCriticalPath } from "../algorithms.js";
+import { getVisibleProjectIds } from "../utils/projectAccess.js";
 
 /**
  * GET /api/projects/:id/critical-path
@@ -28,6 +29,11 @@ export async function criticalPath(req, res, next) {
   try {
     const { id: projectId } = req.params;
 
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(projectId)) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
     // Pull tasks via requirement → project join.
     // Exclude deprecated tasks (removed from scope) and CANCELLED tasks
     // (abandoned work — not part of the schedule).
@@ -40,7 +46,7 @@ export async function criticalPath(req, res, next) {
       .eq("is_deprecated", false)
       .neq("status", "CANCELLED");
 
-    if (tasksErr) return res.status(500).json({ error: tasksErr.message });
+    if (tasksErr) return next(tasksErr);
     if (!tasks || tasks.length === 0) {
       return res.json({ schedule: [], criticalPath: [], projectDuration: 0 });
     }
@@ -57,7 +63,7 @@ export async function criticalPath(req, res, next) {
       .in("task_id", taskIds)
       .in("depends_on_task_id", taskIds);
 
-    if (depsErr) return res.status(500).json({ error: depsErr.message });
+    if (depsErr) return next(depsErr);
 
     try {
       const result = calculateCriticalPath(tasks, deps || []);
@@ -92,12 +98,23 @@ export async function criticalPath(req, res, next) {
 export async function traceabilityMatrix(req, res, next) {
   try {
     const { project_id } = req.query;
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+
+    if (project_id) {
+      if (!visibleProjectIds.includes(project_id)) {
+        return res.status(404).json({ error: "Project not found." });
+      }
+    } else if (visibleProjectIds.length === 0) {
+      return res.json({ matrix: [] });
+    }
 
     let query = supabase.from("traceability_matrix").select("*");
-    if (project_id) query = query.eq("project_id", project_id);
+    query = project_id
+      ? query.eq("project_id", project_id)
+      : query.in("project_id", visibleProjectIds);
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
 
     res.json({ matrix: data });
   } catch (err) {

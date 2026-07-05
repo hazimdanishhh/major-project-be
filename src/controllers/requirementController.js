@@ -28,16 +28,32 @@
  *     1. Status revert to UNDER_ANALYSIS
  *     2. Version bump + new requirement_versions row
  *     3. Impact analysis — all linked tasks flagged as at-risk
+ *
+ * Tenant isolation: every handler below is scoped to projects the caller can
+ * see (getVisibleProjectIds — pm: owned projects, client: their projects,
+ * member: projects with a task assigned to them), mirroring the scoping
+ * projectController.js already applies to /api/projects. Out-of-scope
+ * requirements report 404 (existence-hiding), not 403.
  */
 
 import supabase from "../config/supabase.js";
 import { validateTransition, flagImpactedTasks } from "../algorithms.js";
+import { getVisibleProjectIds } from "../utils/projectAccess.js";
 
 // ─── List ────────────────────────────────────────────────────────────────────
 
 export async function listRequirements(req, res, next) {
   try {
     const { project_id, status } = req.query;
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+
+    if (project_id) {
+      if (!visibleProjectIds.includes(project_id)) {
+        return res.status(404).json({ error: "Project not found." });
+      }
+    } else if (visibleProjectIds.length === 0) {
+      return res.json({ requirements: [] });
+    }
 
     let query = supabase
       .from("requirements")
@@ -48,11 +64,13 @@ export async function listRequirements(req, res, next) {
       )
       .order("created_at", { ascending: false });
 
-    if (project_id) query = query.eq("project_id", project_id);
+    query = project_id
+      ? query.eq("project_id", project_id)
+      : query.in("project_id", visibleProjectIds);
     if (status) query = query.eq("status", status);
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
 
     res.json({ requirements: data });
   } catch (err) {
@@ -65,6 +83,11 @@ export async function listRequirements(req, res, next) {
 export async function createRequirement(req, res, next) {
   try {
     const { project_id, title, description } = req.body;
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(project_id)) {
+      return res.status(404).json({ error: "Project not found." });
+    }
 
     const { data, error } = await supabase
       .from("requirements")
@@ -79,7 +102,7 @@ export async function createRequirement(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
 
     // Record initial version in audit trail
     await supabase.from("requirement_versions").insert({
@@ -105,7 +128,7 @@ export async function getRequirement(req, res, next) {
     const { data, error } = await supabase
       .from("requirements")
       .select(
-        `*, 
+        `*,
          created_by_user:profiles!requirements_created_by_fkey(id, full_name),
          requirement_specifications(*),
          tasks(id, title, status, is_at_risk, is_ai_generated, assignee:profiles!tasks_assignee_id_fkey(id, full_name))`,
@@ -115,6 +138,12 @@ export async function getRequirement(req, res, next) {
 
     if (error || !data)
       return res.status(404).json({ error: "Requirement not found." });
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(data.project_id)) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
     res.json({ requirement: data });
   } catch (err) {
     next(err);
@@ -136,6 +165,11 @@ export async function updateRequirement(req, res, next) {
       .single();
 
     if (fetchErr || !current) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(current.project_id)) {
       return res.status(404).json({ error: "Requirement not found." });
     }
 
@@ -219,7 +253,7 @@ export async function updateRequirement(req, res, next) {
       .select()
       .single();
 
-    if (updateErr) return res.status(500).json({ error: updateErr.message });
+    if (updateErr) return next(updateErr);
 
     // ── Step 4: Audit trail for status change ─────────────────────────────
     if (targetStatus !== current.status) {
@@ -250,25 +284,31 @@ export async function deleteRequirement(req, res, next) {
   try {
     const { id } = req.params;
 
-    // 1. Soft-delete all linked tasks
-    const { error: tasksErr } = await supabase
-      .from("tasks")
-      .update({ is_deprecated: true, updated_at: new Date().toISOString() })
-      .eq("requirement_id", id);
-
-    if (tasksErr) return res.status(500).json({ error: tasksErr.message });
-
-    // 2. Fetch current status for audit trail
+    // Fetch first (status + project_id) so ownership can be verified before
+    // anything is mutated.
     const { data: current, error: fetchErr } = await supabase
       .from("requirements")
-      .select("status")
+      .select("status, project_id")
       .eq("id", id)
       .single();
 
     if (fetchErr || !current)
       return res.status(404).json({ error: "Requirement not found." });
 
-    // 3. Soft-delete the requirement by marking it COMPLETED
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(current.project_id)) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    // 1. Soft-delete all linked tasks
+    const { error: tasksErr } = await supabase
+      .from("tasks")
+      .update({ is_deprecated: true, updated_at: new Date().toISOString() })
+      .eq("requirement_id", id);
+
+    if (tasksErr) return next(tasksErr);
+
+    // 2. Soft-delete the requirement by marking it COMPLETED
     const { data: deleted, error: reqErr } = await supabase
       .from("requirements")
       .update({
@@ -279,9 +319,9 @@ export async function deleteRequirement(req, res, next) {
       .select()
       .single();
 
-    if (reqErr) return res.status(500).json({ error: reqErr.message });
+    if (reqErr) return next(reqErr);
 
-    // 4. Record the status change in the audit trail
+    // 3. Record the status change in the audit trail
     if (current.status !== "COMPLETED") {
       await supabase.from("requirement_status_history").insert({
         requirement_id: id,
@@ -306,6 +346,21 @@ export async function getVersions(req, res, next) {
   try {
     const { id } = req.params;
 
+    const { data: requirement, error: reqErr } = await supabase
+      .from("requirements")
+      .select("project_id")
+      .eq("id", id)
+      .single();
+
+    if (reqErr || !requirement) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(requirement.project_id)) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
     const { data, error } = await supabase
       .from("requirement_versions")
       .select(
@@ -314,7 +369,7 @@ export async function getVersions(req, res, next) {
       .eq("requirement_id", id)
       .order("version_no", { ascending: false });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.json({ versions: data });
   } catch (err) {
     next(err);
@@ -327,6 +382,21 @@ export async function getStatusHistory(req, res, next) {
   try {
     const { id } = req.params;
 
+    const { data: requirement, error: reqErr } = await supabase
+      .from("requirements")
+      .select("project_id")
+      .eq("id", id)
+      .single();
+
+    if (reqErr || !requirement) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(requirement.project_id)) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
     const { data, error } = await supabase
       .from("requirement_status_history")
       .select(
@@ -335,7 +405,7 @@ export async function getStatusHistory(req, res, next) {
       .eq("requirement_id", id)
       .order("changed_at", { ascending: false });
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.json({ history: data });
   } catch (err) {
     next(err);
@@ -364,11 +434,16 @@ export async function createSpec(req, res, next) {
     // Verify the requirement exists and is in an analysis-phase state
     const { data: requirement, error: reqErr } = await supabase
       .from("requirements")
-      .select("status")
+      .select("status, project_id")
       .eq("id", requirement_id)
       .single();
 
     if (reqErr || !requirement) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(requirement.project_id)) {
       return res.status(404).json({ error: "Requirement not found." });
     }
 
@@ -394,7 +469,7 @@ export async function createSpec(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.status(201).json({ spec: data });
   } catch (err) {
     next(err);
@@ -415,11 +490,16 @@ export async function updateSpec(req, res, next) {
     // Verify the requirement exists and is in an analysis-phase state
     const { data: requirement, error: reqErr } = await supabase
       .from("requirements")
-      .select("status")
+      .select("status, project_id")
       .eq("id", requirement_id)
       .single();
 
     if (reqErr || !requirement) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(requirement.project_id)) {
       return res.status(404).json({ error: "Requirement not found." });
     }
 
@@ -461,7 +541,7 @@ export async function updateSpec(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.json({ spec: data });
   } catch (err) {
     next(err);

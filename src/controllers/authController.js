@@ -99,7 +99,7 @@ export async function listUsers(req, res, next) {
       .select("id, full_name, role")
       .order("full_name");
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.json({ users: data });
   } catch (err) {
     next(err);

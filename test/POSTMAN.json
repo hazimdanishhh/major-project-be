@@ -2370,7 +2370,7 @@
           ]
         },
         {
-          "name": "Ownership: second Member (not assignee) blocked from Task1 status (expect 403)",
+          "name": "Ownership: second Member (not on this project at all) blocked from Task1 status (expect 404)",
           "request": {
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
@@ -2394,7 +2394,11 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                  "// Session 4: member2 isn't assigned to any task in this project, so",
+                  "// project-tenant-isolation now scopes them out before the assignee",
+                  "// check ever runs — 404 (existence-hiding), not 403 (which would",
+                  "// have confirmed the task exists to someone outside the project).",
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
                 ]
               }
             }

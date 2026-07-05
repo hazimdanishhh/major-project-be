@@ -21,16 +21,36 @@
  *     they must be unblocked first (all parents DONE) via the BFS workflow
  *   - Any status can transition to CANCELLED
  *   - DONE and CANCELLED are terminal — cannot be reversed via this endpoint
+ *
+ * Tenant isolation: tasks have no direct project_id column, so ownership is
+ * always resolved via requirement_id -> requirements.project_id and checked
+ * against getVisibleProjectIds/getVisibleRequirementIds (projectAccess.js).
+ * A pm is scoped to their own projects here just like everywhere else — they
+ * are only exempt from the member's per-task assignee check, not from
+ * project ownership. Out-of-scope tasks report 404 (existence-hiding).
  */
 
 import supabase from "../config/supabase.js";
 import { wouldCreateCycle, orchestrateWorkflow } from "../algorithms.js";
+import {
+  getVisibleProjectIds,
+  getVisibleRequirementIds,
+} from "../utils/projectAccess.js";
 
 // ─── List ────────────────────────────────────────────────────────────────────
 
 export async function listTasks(req, res, next) {
   try {
     const { requirement_id, status, assignee_id, is_at_risk } = req.query;
+    const visibleRequirementIds = await getVisibleRequirementIds(req.user);
+
+    if (requirement_id) {
+      if (!visibleRequirementIds.includes(requirement_id)) {
+        return res.status(404).json({ error: "Requirement not found." });
+      }
+    } else if (visibleRequirementIds.length === 0) {
+      return res.json({ tasks: [] });
+    }
 
     let query = supabase
       .from("tasks")
@@ -43,14 +63,17 @@ export async function listTasks(req, res, next) {
       .eq("is_deprecated", false)
       .order("created_at", { ascending: false });
 
-    if (requirement_id) query = query.eq("requirement_id", requirement_id);
+    query = requirement_id
+      ? query.eq("requirement_id", requirement_id)
+      : query.in("requirement_id", visibleRequirementIds);
+
     if (status) query = query.eq("status", status);
     if (assignee_id) query = query.eq("assignee_id", assignee_id);
     if (is_at_risk !== undefined)
       query = query.eq("is_at_risk", is_at_risk === "true");
 
     const { data, error } = await query;
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
 
     res.json({ tasks: data });
   } catch (err) {
@@ -71,6 +94,21 @@ export async function createTask(req, res, next) {
       priority,
     } = req.body;
 
+    const { data: requirement, error: reqErr } = await supabase
+      .from("requirements")
+      .select("project_id")
+      .eq("id", requirement_id)
+      .single();
+
+    if (reqErr || !requirement) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(requirement.project_id)) {
+      return res.status(404).json({ error: "Requirement not found." });
+    }
+
     const { data, error } = await supabase
       .from("tasks")
       .insert({
@@ -86,7 +124,7 @@ export async function createTask(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.status(201).json({ task: data });
   } catch (err) {
     next(err);
@@ -111,6 +149,12 @@ export async function getTask(req, res, next) {
 
     if (error || !data)
       return res.status(404).json({ error: "Task not found." });
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(data.requirement?.project_id)) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
     res.json({ task: data });
   } catch (err) {
     next(err);
@@ -123,17 +167,24 @@ export async function updateTask(req, res, next) {
   try {
     const { id } = req.params;
 
-    // Members may only edit tasks assigned to them; pm is exempt.
-    if (req.user.role === "member") {
-      const { data: current, error: fetchErr } = await supabase
-        .from("tasks")
-        .select("assignee_id")
-        .eq("id", id)
-        .single();
+    const { data: current, error: fetchErr } = await supabase
+      .from("tasks")
+      .select("assignee_id, requirement:requirements(project_id)")
+      .eq("id", id)
+      .single();
 
-      if (fetchErr || !current) {
-        return res.status(404).json({ error: "Task not found." });
-      }
+    if (fetchErr || !current) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(current.requirement?.project_id)) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
+    // Members may only edit tasks assigned to them; pm is exempt from this
+    // check (but not from the project-ownership check above).
+    if (req.user.role === "member") {
       if (current.assignee_id !== req.user.id) {
         return res.status(403).json({
           error: "Access denied. You can only edit tasks assigned to you.",
@@ -171,7 +222,7 @@ export async function updateTask(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     if (!data) return res.status(404).json({ error: "Task not found." });
     res.json({ task: data });
   } catch (err) {
@@ -202,12 +253,17 @@ export async function updateTaskStatus(req, res, next) {
     // Fetch current task to enforce transition rules
     const { data: current, error: fetchErr } = await supabase
       .from("tasks")
-      .select("status, assignee_id")
+      .select("status, assignee_id, requirement:requirements(project_id)")
       .eq("id", id)
       .single();
 
     if (fetchErr || !current)
       return res.status(404).json({ error: "Task not found." });
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(current.requirement?.project_id)) {
+      return res.status(404).json({ error: "Task not found." });
+    }
 
     // Members may only transition tasks assigned to them; pm is exempt.
     if (req.user.role === "member" && current.assignee_id !== req.user.id) {
@@ -258,7 +314,7 @@ export async function updateTaskStatus(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     if (!updated) return res.status(404).json({ error: "Task not found." });
 
     // BFS: when a task is completed, auto-unblock direct children
@@ -280,12 +336,27 @@ export async function deleteTask(req, res, next) {
   try {
     const { id } = req.params;
 
+    const { data: current, error: fetchErr } = await supabase
+      .from("tasks")
+      .select("requirement:requirements(project_id)")
+      .eq("id", id)
+      .single();
+
+    if (fetchErr || !current) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(current.requirement?.project_id)) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
     const { error } = await supabase
       .from("tasks")
       .update({ is_deprecated: true, updated_at: new Date().toISOString() })
       .eq("id", id);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.json({ message: "Task deprecated." });
   } catch (err) {
     next(err);
@@ -311,6 +382,20 @@ export async function listDependencies(req, res, next) {
       });
     }
 
+    const { data: task, error: taskErr } = await supabase
+      .from("tasks")
+      .select("id, requirement:requirements(project_id)")
+      .eq("id", id)
+      .single();
+
+    if (taskErr || !task)
+      return res.status(404).json({ error: "Task not found." });
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(task.requirement?.project_id)) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
     const { data, error } = await supabase
       .from("task_dependencies")
       .select(
@@ -320,7 +405,7 @@ export async function listDependencies(req, res, next) {
       )
       .or(`task_id.eq.${id},depends_on_task_id.eq.${id}`);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.json({ dependencies: data });
   } catch (err) {
     next(err);
@@ -335,12 +420,31 @@ export async function addDependency(req, res, next) {
       return res.status(400).json({ error: "A task cannot depend on itself." });
     }
 
+    // Both tasks must exist and belong to a project visible to the caller.
+    const { data: bothTasks, error: fetchErr } = await supabase
+      .from("tasks")
+      .select("id, requirement:requirements(project_id)")
+      .in("id", [task_id, depends_on_task_id]);
+
+    if (fetchErr) return next(fetchErr);
+    if (!bothTasks || bothTasks.length !== 2) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    const bothVisible = bothTasks.every((t) =>
+      visibleProjectIds.includes(t.requirement?.project_id),
+    );
+    if (!bothVisible) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
     // Build current adjacency list for DFS (without the new edge)
     const { data: allDeps, error: depsErr } = await supabase
       .from("task_dependencies")
       .select("task_id, depends_on_task_id");
 
-    if (depsErr) return res.status(500).json({ error: depsErr.message });
+    if (depsErr) return next(depsErr);
 
     const graph = {};
     for (const { task_id: t, depends_on_task_id: d } of allDeps) {
@@ -370,7 +474,7 @@ export async function addDependency(req, res, next) {
           .status(409)
           .json({ error: "This dependency already exists." });
       }
-      return res.status(500).json({ error: error.message });
+      return next(error);
     }
 
     // ─── Auto-block logic ────────────────────────────────────────────────
@@ -416,13 +520,31 @@ export async function removeDependency(req, res, next) {
   try {
     const { task_id, depends_on_task_id } = req.params;
 
+    // If either task exists, it must belong to a project visible to the
+    // caller. If neither exists the delete below is a harmless no-op, same
+    // as before this check was added.
+    const { data: bothTasks, error: fetchErr } = await supabase
+      .from("tasks")
+      .select("id, requirement:requirements(project_id)")
+      .in("id", [task_id, depends_on_task_id]);
+
+    if (fetchErr) return next(fetchErr);
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    const hasInvisibleTask = (bothTasks || []).some(
+      (t) => !visibleProjectIds.includes(t.requirement?.project_id),
+    );
+    if (hasInvisibleTask) {
+      return res.status(404).json({ error: "Task not found." });
+    }
+
     const { error } = await supabase
       .from("task_dependencies")
       .delete()
       .eq("task_id", task_id)
       .eq("depends_on_task_id", depends_on_task_id);
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
 
     // ─── Re-evaluate child block state after dependency removal ──────────
     // If this was the last blocking parent (or all remaining parents are DONE),

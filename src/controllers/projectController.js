@@ -16,34 +16,13 @@
  */
 
 import supabase from "../config/supabase.js";
+import { getMemberVisibleProjectIds } from "../utils/projectAccess.js";
 
 // Strips PostgREST .or() filter-syntax characters (`,`, `(`, `)`) from a
 // search term before interpolating it into a raw filter string — otherwise
 // a crafted value could alter the filter's boolean structure.
 function sanitizeSearchTerm(term) {
   return term.replace(/[,()]/g, "");
-}
-
-// Projects visible to a `member`: any project containing a task assigned to them.
-async function getMemberVisibleProjectIds(memberId) {
-  const { data: assignedTasks, error: taskErr } = await supabase
-    .from("tasks")
-    .select("requirement_id")
-    .eq("assignee_id", memberId);
-  if (taskErr) throw taskErr;
-
-  const reqIds = [
-    ...new Set((assignedTasks || []).map((t) => t.requirement_id).filter(Boolean)),
-  ];
-  if (reqIds.length === 0) return [];
-
-  const { data: reqs, error: reqErr } = await supabase
-    .from("requirements")
-    .select("project_id")
-    .in("id", reqIds);
-  if (reqErr) throw reqErr;
-
-  return [...new Set((reqs || []).map((r) => r.project_id).filter(Boolean))];
 }
 
 // GET ALL PROJECTS (Paginated, Searchable, Filtered)
@@ -108,7 +87,7 @@ export async function listProjectsPaginated(req, res, next) {
     // 7. Execute the query
     const { data, count, error } = await query;
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
 
     // 8. Return exactly what usePaginatedQuery expects!
     res.json({
@@ -137,7 +116,7 @@ export async function createProject(req, res, next) {
       .select()
       .single();
 
-    if (error) return res.status(500).json({ error: error.message });
+    if (error) return next(error);
     res.status(201).json({ project: data });
   } catch (err) {
     next(err);
@@ -197,16 +176,21 @@ export async function updateProject(req, res, next) {
     if (client_id !== undefined) updates.client_id = client_id;
     updates.updated_at = new Date().toISOString();
 
+    // Only the owning pm may update a project — matches getProject's scoping.
+    // Not using .single() here: with the pm_id filter added, a wrong-owner
+    // update matches zero rows just like a nonexistent id would, and
+    // .single() treats "zero rows" as a query error rather than empty data.
     const { data, error } = await supabase
       .from("projects")
       .update(updates)
       .eq("id", id)
-      .select()
-      .single();
+      .eq("pm_id", req.user.id)
+      .select();
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: "Project not found." });
-    res.json({ project: data });
+    if (error) return next(error);
+    if (!data || data.length === 0)
+      return res.status(404).json({ error: "Project not found." });
+    res.json({ project: data[0] });
   } catch (err) {
     next(err);
   }
@@ -218,16 +202,19 @@ export async function deleteProject(req, res, next) {
   try {
     const { id } = req.params;
 
+    // Only the owning pm may archive a project — matches getProject's scoping.
+    // Not using .single() here for the same reason as updateProject above.
     const { data, error } = await supabase
       .from("projects")
       .update({ status: "ARCHIVED", updated_at: new Date().toISOString() })
       .eq("id", id)
-      .select()
-      .single();
+      .eq("pm_id", req.user.id)
+      .select();
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(404).json({ error: "Project not found." });
-    res.json({ message: "Project archived.", project: data });
+    if (error) return next(error);
+    if (!data || data.length === 0)
+      return res.status(404).json({ error: "Project not found." });
+    res.json({ message: "Project archived.", project: data[0] });
   } catch (err) {
     next(err);
   }

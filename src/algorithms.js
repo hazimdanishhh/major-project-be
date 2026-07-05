@@ -274,16 +274,25 @@ export function calculateCriticalPath(tasks, dependencies) {
  * @param {{temp_id:string, depends_on_temp_ids?:string[]}[]} rawTasks
  * @returns {object[]} tasks with cleaned depends_on_temp_ids + is_ai_generated: true
  */
+const VALID_TASK_PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
 export function sanitizeWBS(rawTasks) {
+  // Drop any task with a missing/empty title before it can enter the
+  // dependency graph or reach the DB — an untitled task would otherwise
+  // fail the DB's NOT NULL constraint with a raw error at persist time.
+  const validTasks = rawTasks.filter(
+    (t) => typeof t.title === "string" && t.title.trim().length > 0,
+  );
+
   const graph = {};
-  rawTasks.forEach((t) => {
+  validTasks.forEach((t) => {
     graph[t.temp_id] = [];
   });
 
-  return rawTasks.map((t) => {
+  return validTasks.map((t) => {
     const safeDeps = [];
     for (const depId of t.depends_on_temp_ids || []) {
-      if (!graph[depId]) continue; // ignore references to unknown temp_ids
+      if (!graph[depId]) continue; // ignore references to unknown/dropped temp_ids
 
       graph[t.temp_id].push(depId); // tentatively add edge
       if (wouldCreateCycle(graph, t.temp_id, depId)) {
@@ -292,6 +301,24 @@ export function sanitizeWBS(rawTasks) {
       }
       safeDeps.push(depId);
     }
-    return { ...t, depends_on_temp_ids: safeDeps, is_ai_generated: true };
+
+    // Normalize fields the LLM might hallucinate outside their valid range —
+    // otherwise a bad value only surfaces as a raw DB constraint-violation
+    // error at persist time instead of a clean fallback.
+    const priority = VALID_TASK_PRIORITIES.includes(t.priority)
+      ? t.priority
+      : "MEDIUM";
+    const estimated_hours =
+      Number.isInteger(t.estimated_hours) && t.estimated_hours >= 0
+        ? t.estimated_hours
+        : 0;
+
+    return {
+      ...t,
+      priority,
+      estimated_hours,
+      depends_on_temp_ids: safeDeps,
+      is_ai_generated: true,
+    };
   });
 }
