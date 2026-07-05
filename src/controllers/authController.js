@@ -14,8 +14,11 @@ import supabase from "../config/supabase.js";
 
 /**
  * POST /api/auth/register
- * Body: { email, password, full_name, role }
- * role must be 'client' | 'pm' | 'member'
+ * Body: { email, password, full_name }
+ *
+ * This endpoint only ever creates CLIENT accounts — role is hardcoded, not
+ * read from the request body, so no input can influence it. pm/member
+ * accounts are provisioned outside the app (see PROCESS_FLOW.md).
  *
  * Creates the auth user, then inserts into profiles.
  * The handle_new_user() trigger in Supabase also fires,
@@ -24,7 +27,8 @@ import supabase from "../config/supabase.js";
  */
 export async function register(req, res, next) {
   try {
-    const { email, password, full_name, role } = req.body;
+    const { email, password, full_name } = req.body;
+    const role = "client";
 
     // 1. Create the Supabase auth user via admin API (service-role can do this)
     const { data: authData, error: authError } =

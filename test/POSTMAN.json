@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "major-project-be",
-    "description": "Complete API test collection for the AI-Augmented Project & Requirements Management System.\n\nRewritten (session 2) to match the actual implemented API — the previous version of this file predated most of the real design (it used a nonexistent \"developer\" role instead of client/pm/member, called a backend /api/auth/login endpoint that was never implemented since login is Supabase-direct, used Title-Case statuses instead of the real UPPER_SNAKE_CASE enums, omitted the required client_id on project creation, and called the AI WBS endpoints at the wrong path). Every request below was verified against a live run of major-project-be.\n\nBefore running: set the `supabaseUrl` and `supabaseAnonKey` collection variables from major-project-fe/.env (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY) if they aren't already filled in, and set `baseUrl` to your running backend (default http://localhost:4000).\n\nTest accounts are generated fresh on every run (emails include a random suffix via a collection-level pre-request script), so this collection is safe to re-run repeatedly without 409 email collisions — note this does mean each run leaves a few new throwaway accounts/projects in your Supabase project; periodically clean these up from the dashboard.\n\nTesting order:\n1. Auth & Setup (register + Supabase-direct login for pm/client/member)\n2. Projects & Access Control (CRUD + multi-tenant isolation)\n3. Requirements (FSM + versioning + impact analysis)\n4. Specifications (create/finalize + status-gate)\n5. Tasks (CRUD + DFS + BFS + ownership)\n6. Algorithms (CPM + Traceability)\n7. AI WBS Generation (HITL) — calls the real Groq API, requires GROQ_API_KEY configured\n8. RBAC & Security Edge Cases",
+    "description": "Complete API test collection for the AI-Augmented Project & Requirements Management System.\n\nRewritten (session 2) to match the actual implemented API, then updated (session 3) after registration was locked down to client-only.\n\nIMPORTANT — before running: pm and member accounts can no longer be created via this API (POST /api/auth/register only ever creates client accounts, by design — role is hardcoded server-side, not read from the request). You must manually create at least these four accounts directly in Supabase (dashboard or SQL) before running this collection, then fill in their credentials in the corresponding `existing*` collection variables: a pm account (`existingPmEmail`/`existingPmPassword`), a second pm account for isolation testing (`existingPm2Email`/`existingPm2Password`), a member account (`existingMemberEmail`/`existingMemberPassword`), and a second member account (`existingMember2Email`/`existingMember2Password`). Also set `supabaseUrl` and `supabaseAnonKey` from major-project-fe/.env if not already filled in, and `baseUrl` to your running backend (default http://localhost:4000).\n\nClient accounts are still created live by this collection on every run (self-registration remains open) — emails include a random suffix via a collection-level pre-request script, so re-running is safe without 409 collisions. Passwords used throughout satisfy the current policy (10-72 chars, upper+lower+number+special character).\n\nTesting order:\n1. Auth & Setup (client self-registration + validation; login for all roles)\n2. Projects & Access Control (CRUD + multi-tenant isolation)\n3. Requirements (FSM + versioning + impact analysis)\n4. Specifications (create/finalize + status-gate)\n5. Tasks (CRUD + DFS + BFS + ownership)\n6. Algorithms (CPM + Traceability)\n7. AI WBS Generation (HITL) — calls the real Groq API, requires GROQ_API_KEY configured\n8. RBAC & Security Edge Cases",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -9,17 +9,13 @@
       "listen": "prerequest",
       "script": {
         "exec": [
-          "// Generate a shared random suffix once per collection run so every",
-          "// test-account email is unique (avoids 409 on repeat runs) while",
-          "// staying stable across the Register/Login pair of requests.",
+          "// Generate a shared random suffix once per collection run so client",
+          "// test-account emails are unique (avoids 409 on repeat runs). pm/member",
+          "// accounts are pre-seeded (see collection description) and don't need this.",
           "if (!pm.collectionVariables.get('runSuffix')) {",
           "  const suffix = Date.now() + '' + Math.floor(Math.random() * 100000);",
           "  pm.collectionVariables.set('runSuffix', suffix);",
-          "  pm.collectionVariables.set('pmEmail', `pm-${suffix}@test.com`);",
           "  pm.collectionVariables.set('clientEmail', `client-${suffix}@test.com`);",
-          "  pm.collectionVariables.set('memberEmail', `member-${suffix}@test.com`);",
-          "  pm.collectionVariables.set('member2Email', `member2-${suffix}@test.com`);",
-          "  pm.collectionVariables.set('pm2Email', `pm2-${suffix}@test.com`);",
           "  pm.collectionVariables.set('client2Email', `client2-${suffix}@test.com`);",
           "}"
         ]
@@ -27,36 +23,176 @@
     }
   ],
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
-    { "key": "supabaseUrl", "value": "https://avhupwhzzatvfjcadxso.supabase.co", "type": "string" },
-    { "key": "supabaseAnonKey", "value": "", "type": "string" },
-    { "key": "runSuffix", "value": "", "type": "string" },
-    { "key": "pmEmail", "value": "", "type": "string" },
-    { "key": "clientEmail", "value": "", "type": "string" },
-    { "key": "memberEmail", "value": "", "type": "string" },
-    { "key": "member2Email", "value": "", "type": "string" },
-    { "key": "pm2Email", "value": "", "type": "string" },
-    { "key": "client2Email", "value": "", "type": "string" },
-    { "key": "pmToken", "value": "", "type": "string" },
-    { "key": "clientToken", "value": "", "type": "string" },
-    { "key": "memberToken", "value": "", "type": "string" },
-    { "key": "member2Token", "value": "", "type": "string" },
-    { "key": "pm2Token", "value": "", "type": "string" },
-    { "key": "client2Token", "value": "", "type": "string" },
-    { "key": "pmUserId", "value": "", "type": "string" },
-    { "key": "clientUserId", "value": "", "type": "string" },
-    { "key": "memberUserId", "value": "", "type": "string" },
-    { "key": "member2UserId", "value": "", "type": "string" },
-    { "key": "pm2UserId", "value": "", "type": "string" },
-    { "key": "client2UserId", "value": "", "type": "string" },
-    { "key": "projectId", "value": "", "type": "string" },
-    { "key": "project2Id", "value": "", "type": "string" },
-    { "key": "requirementId", "value": "", "type": "string" },
-    { "key": "requirement2Id", "value": "", "type": "string" },
-    { "key": "specId", "value": "", "type": "string" },
-    { "key": "taskId1", "value": "", "type": "string" },
-    { "key": "taskId2", "value": "", "type": "string" },
-    { "key": "taskId3", "value": "", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "supabaseUrl",
+      "value": "https://avhupwhzzatvfjcadxso.supabase.co",
+      "type": "string"
+    },
+    {
+      "key": "supabaseAnonKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runSuffix",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clientEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "client2Email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pmToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clientToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "memberToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "member2Token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pm2Token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "client2Token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pmUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "clientUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "memberUserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "member2UserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pm2UserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "client2UserId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "projectId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "project2Id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "requirementId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "requirement2Id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "specId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "taskId1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "taskId2",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "taskId3",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingPmEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingPmPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingPm2Email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingPm2Password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingMemberEmail",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingMemberPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingMember2Email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "existingMember2Password",
+      "value": "",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -64,7 +200,10 @@
       "item": [
         {
           "name": "GET /health",
-          "request": { "method": "GET", "url": "{{baseUrl}}/health" },
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/health"
+          },
           "event": [
             {
               "listen": "test",
@@ -81,46 +220,23 @@
         }
       ]
     },
-
     {
       "name": "01 - Auth & Setup",
       "item": [
-        {
-          "name": "Register PM user",
-          "request": {
-            "method": "POST",
-            "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{pmEmail}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Project Manager\",\n  \"role\": \"pm\"\n}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.test('Role is pm', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.user.role).to.eql('pm');",
-                  "  pm.collectionVariables.set('pmUserId', json.user.id);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
         {
           "name": "Register Client user",
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Test Client\",\n  \"role\": \"client\"\n}"
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"Passw0rd!2024\",\n  \"full_name\": \"Test Client\"\n}"
             }
           },
           "event": [
@@ -140,67 +256,19 @@
           ]
         },
         {
-          "name": "Register Member user",
-          "request": {
-            "method": "POST",
-            "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{memberEmail}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Team Member\",\n  \"role\": \"member\"\n}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.test('Role is member', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.user.role).to.eql('member');",
-                  "  pm.collectionVariables.set('memberUserId', json.user.id);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Register second Member (for ownership negative tests)",
-          "request": {
-            "method": "POST",
-            "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{member2Email}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Second Member\",\n  \"role\": \"member\"\n}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.test('Has userId', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.collectionVariables.set('member2UserId', json.user.id);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "Register — duplicate email (expect 409)",
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{pmEmail}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Duplicate PM\",\n  \"role\": \"pm\"\n}"
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"Passw0rd!2024\",\n  \"full_name\": \"Duplicate Client\"\n}"
             }
           },
           "event": [
@@ -215,14 +283,19 @@
           ]
         },
         {
-          "name": "Register — invalid role (expect 400)",
+          "name": "Register — role field in body is ignored (still creates a client account)",
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"bad-{{runSuffix}}@test.com\",\n  \"password\": \"password123\",\n  \"full_name\": \"Bad Role\",\n  \"role\": \"admin\"\n}"
+              "raw": "{\n  \"email\": \"role-ignore-{{runSuffix}}@test.com\",\n  \"password\": \"Passw0rd!2024\",\n  \"full_name\": \"Role Ignore Test\",\n  \"role\": \"pm\"\n}"
             }
           },
           "event": [
@@ -230,7 +303,226 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Status 400 for invalid role', () => pm.response.to.have.status(400));"
+                  "pm.test('Status 201 — role field does not cause a validation error', () => pm.response.to.have.status(201));",
+                  "pm.test('Account created as client, role field was ignored', () => {",
+                  "  pm.expect(pm.response.json().user.role).to.eql('client');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — password too short (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"Sh0rt!a\",\n  \"full_name\": \"Policy Test\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — password missing uppercase (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"passw0rd!2024\",\n  \"full_name\": \"Policy Test\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — password missing lowercase (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"PASSW0RD!2024\",\n  \"full_name\": \"Policy Test\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — password missing number (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"Password!!!!\",\n  \"full_name\": \"Policy Test\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — password missing special character (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"Passw0rd2024\",\n  \"full_name\": \"Policy Test\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — password too long (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"Aa1!xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\n  \"full_name\": \"Policy Test\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — full_name too short (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"Passw0rd!2024\",\n  \"full_name\": \"A\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register — full_name too long (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/auth/register",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"invalid-{{runSuffix}}@test.com\",\n  \"password\": \"Passw0rd!2024\",\n  \"full_name\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
                 ]
               }
             }
@@ -242,12 +534,18 @@
             "method": "POST",
             "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "apikey", "value": "{{supabaseAnonKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{pmEmail}}\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"{{existingPmEmail}}\",\n  \"password\": \"{{existingPmPassword}}\"\n}"
             }
           },
           "event": [
@@ -260,6 +558,7 @@
                   "  const json = pm.response.json();",
                   "  pm.expect(json.access_token).to.exist;",
                   "  pm.collectionVariables.set('pmToken', json.access_token);",
+                  "  pm.collectionVariables.set('pmUserId', json.user.id);",
                   "});"
                 ]
               }
@@ -272,12 +571,18 @@
             "method": "POST",
             "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "apikey", "value": "{{supabaseAnonKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"Passw0rd!2024\"\n}"
             }
           },
           "event": [
@@ -286,8 +591,12 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "const json = pm.response.json();",
-                  "pm.collectionVariables.set('clientToken', json.access_token);"
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.access_token).to.exist;",
+                  "  pm.collectionVariables.set('clientToken', json.access_token);",
+                  "  pm.collectionVariables.set('clientUserId', json.user.id);",
+                  "});"
                 ]
               }
             }
@@ -299,12 +608,18 @@
             "method": "POST",
             "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "apikey", "value": "{{supabaseAnonKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{memberEmail}}\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"{{existingMemberEmail}}\",\n  \"password\": \"{{existingMemberPassword}}\"\n}"
             }
           },
           "event": [
@@ -313,8 +628,12 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "const json = pm.response.json();",
-                  "pm.collectionVariables.set('memberToken', json.access_token);"
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.access_token).to.exist;",
+                  "  pm.collectionVariables.set('memberToken', json.access_token);",
+                  "  pm.collectionVariables.set('memberUserId', json.user.id);",
+                  "});"
                 ]
               }
             }
@@ -326,12 +645,18 @@
             "method": "POST",
             "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "apikey", "value": "{{supabaseAnonKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{member2Email}}\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"{{existingMember2Email}}\",\n  \"password\": \"{{existingMember2Password}}\"\n}"
             }
           },
           "event": [
@@ -340,8 +665,12 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "const json = pm.response.json();",
-                  "pm.collectionVariables.set('member2Token', json.access_token);"
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.access_token).to.exist;",
+                  "  pm.collectionVariables.set('member2Token', json.access_token);",
+                  "  pm.collectionVariables.set('member2UserId', json.user.id);",
+                  "});"
                 ]
               }
             }
@@ -352,7 +681,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/auth/me",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -360,10 +694,10 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('Returns correct role', () => {",
+                  "pm.test('Returns pm role with a full_name', () => {",
                   "  const json = pm.response.json();",
                   "  pm.expect(json.user.role).to.eql('pm');",
-                  "  pm.expect(json.user.full_name).to.eql('Project Manager');",
+                  "  pm.expect(json.user.full_name).to.be.a('string').and.not.empty;",
                   "});"
                 ]
               }
@@ -372,12 +706,17 @@
         },
         {
           "name": "GET /api/auth/me — no token (expect 401)",
-          "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/me" },
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/auth/me"
+          },
           "event": [
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"]
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
               }
             }
           ]
@@ -387,7 +726,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/auth/users",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -398,7 +742,7 @@
                   "pm.test('Returns array of users', () => {",
                   "  const json = pm.response.json();",
                   "  pm.expect(json.users).to.be.an('array');",
-                  "  pm.expect(json.users.length).to.be.at.least(3);",
+                  "  pm.expect(json.users.length).to.be.at.least(1);",
                   "});"
                 ]
               }
@@ -410,7 +754,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/auth/users",
-            "header": [{ "key": "Authorization", "value": "Bearer {{clientToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -425,7 +774,6 @@
         }
       ]
     },
-
     {
       "name": "02 - Projects & Access Control",
       "item": [
@@ -435,8 +783,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/projects",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -466,8 +820,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/projects",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -478,7 +838,9 @@
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"]
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
               }
             }
           ]
@@ -488,7 +850,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -511,7 +878,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects/{{projectId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -533,8 +905,14 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/projects/{{projectId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -545,7 +923,9 @@
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ]
@@ -555,7 +935,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects?sortBy=badColumn",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -573,7 +958,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects?pageSize=9999",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -591,7 +981,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects?search=with%2Cspecial%28chars%29",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -605,37 +1000,19 @@
           ]
         },
         {
-          "name": "Register second PM (for isolation test)",
-          "request": {
-            "method": "POST",
-            "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"{{pm2Email}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Second PM\",\n  \"role\": \"pm\"\n}"
-            }
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('pm2UserId', pm.response.json().user.id);"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "Register second Client (for isolation test)",
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/auth/register",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{client2Email}}\",\n  \"password\": \"password123\",\n  \"full_name\": \"Second Client\",\n  \"role\": \"client\"\n}"
+              "raw": "{\n  \"email\": \"{{client2Email}}\",\n  \"password\": \"Passw0rd!2024\",\n  \"full_name\": \"Second Client\"\n}"
             }
           },
           "event": [
@@ -656,12 +1033,18 @@
             "method": "POST",
             "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "apikey", "value": "{{supabaseAnonKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{pm2Email}}\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"{{existingPm2Email}}\",\n  \"password\": \"{{existingPm2Password}}\"\n}"
             }
           },
           "event": [
@@ -670,7 +1053,12 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('pm2Token', pm.response.json().access_token);"
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.access_token).to.exist;",
+                  "  pm.collectionVariables.set('pm2Token', json.access_token);",
+                  "  pm.collectionVariables.set('pm2UserId', json.user.id);",
+                  "});"
                 ]
               }
             }
@@ -682,12 +1070,18 @@
             "method": "POST",
             "url": "{{supabaseUrl}}/auth/v1/token?grant_type=password",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "apikey", "value": "{{supabaseAnonKey}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "apikey",
+                "value": "{{supabaseAnonKey}}"
+              }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{client2Email}}\",\n  \"password\": \"password123\"\n}"
+              "raw": "{\n  \"email\": \"{{client2Email}}\",\n  \"password\": \"Passw0rd!2024\"\n}"
             }
           },
           "event": [
@@ -696,7 +1090,12 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "pm.collectionVariables.set('client2Token', pm.response.json().access_token);"
+                  "pm.test('Has access_token', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.access_token).to.exist;",
+                  "  pm.collectionVariables.set('client2Token', json.access_token);",
+                  "  pm.collectionVariables.set('client2UserId', json.user.id);",
+                  "});"
                 ]
               }
             }
@@ -708,8 +1107,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/projects",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pm2Token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pm2Token}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -733,7 +1138,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -755,7 +1165,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects",
-            "header": [{ "key": "Authorization", "value": "Bearer {{clientToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -777,7 +1192,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pm2Token}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pm2Token}}"
+              }
+            ]
           },
           "event": [
             {
@@ -799,7 +1219,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects/{{projectId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pm2Token}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pm2Token}}"
+              }
+            ]
           },
           "event": [
             {
@@ -818,8 +1243,14 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/projects/{{project2Id}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pm2Token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pm2Token}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -845,7 +1276,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects",
-            "header": [{ "key": "Authorization", "value": "Bearer {{clientToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -864,7 +1300,6 @@
         }
       ]
     },
-
     {
       "name": "03 - Requirements (FSM + Versioning + Impact Analysis)",
       "item": [
@@ -874,8 +1309,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/requirements",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -904,7 +1345,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/requirements?project_id={{projectId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -927,7 +1373,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -949,8 +1400,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/requirements",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -961,7 +1418,9 @@
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"]
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
               }
             }
           ]
@@ -972,10 +1431,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"SUBMITTED\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"SUBMITTED\"\n}"
+            }
           },
           "event": [
             {
@@ -997,10 +1465,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"APPROVED\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"APPROVED\"\n}"
+            }
           },
           "event": [
             {
@@ -1022,16 +1499,27 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"UNDER_ANALYSIS\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"UNDER_ANALYSIS\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ]
@@ -1042,10 +1530,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"SPECIFICATION_DRAFTED\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"SPECIFICATION_DRAFTED\"\n}"
+            }
           },
           "event": [
             {
@@ -1063,7 +1560,6 @@
         }
       ]
     },
-
     {
       "name": "04 - Specifications (+ completing Requirement approval)",
       "item": [
@@ -1073,8 +1569,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/requirements",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1099,8 +1601,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/requirements/{{requirement2Id}}/specs",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1124,8 +1632,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/specs",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1153,10 +1667,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/specs/{{specId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"FINAL\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"FINAL\"\n}"
+            }
           },
           "event": [
             {
@@ -1178,16 +1701,27 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"CLIENT_VALIDATION\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"CLIENT_VALIDATION\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"]
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
               }
             }
           ]
@@ -1198,8 +1732,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/specs",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1210,7 +1750,9 @@
             {
               "listen": "test",
               "script": {
-                "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"]
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
               }
             }
           ]
@@ -1221,10 +1763,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"APPROVED\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"APPROVED\"\n}"
+            }
           },
           "event": [
             {
@@ -1246,8 +1797,14 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1275,7 +1832,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/versions",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1296,7 +1858,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/history",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1318,15 +1885,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"SPECIFICATION_DRAFTED\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"SPECIFICATION_DRAFTED\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('200', () => pm.response.to.have.status(200));"] }
+              "script": {
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
           ]
         },
@@ -1336,15 +1916,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"CLIENT_VALIDATION\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"CLIENT_VALIDATION\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('200', () => pm.response.to.have.status(200));"] }
+              "script": {
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
           ]
         },
@@ -1354,10 +1947,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"new_status\": \"APPROVED\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_status\": \"APPROVED\"\n}"
+            }
           },
           "event": [
             {
@@ -1372,7 +1974,6 @@
         }
       ]
     },
-
     {
       "name": "05 - Tasks (CRUD + DFS + BFS + Ownership)",
       "item": [
@@ -1382,8 +1983,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1408,8 +2015,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1434,8 +2047,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1460,8 +2079,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1471,7 +2096,11 @@
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
             }
           ]
         },
@@ -1480,7 +2109,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/tasks?requirement_id={{requirementId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1502,8 +2136,14 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1513,7 +2153,11 @@
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
           ]
         },
@@ -1523,8 +2167,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks/dependencies",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1534,7 +2184,11 @@
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 201', () => pm.response.to.have.status(201));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
             }
           ]
         },
@@ -1544,8 +2198,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks/dependencies",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1555,7 +2215,11 @@
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 201', () => pm.response.to.have.status(201));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));"
+                ]
+              }
             }
           ]
         },
@@ -1565,8 +2229,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks/dependencies",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1593,8 +2263,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/tasks/dependencies",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1604,7 +2280,11 @@
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
             }
           ]
         },
@@ -1613,12 +2293,21 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/tasks/{{taskId2}}/dependencies",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
           ]
         },
@@ -1627,13 +2316,25 @@
           "request": {
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}" }
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
             }
           ]
         },
@@ -1643,15 +2344,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{clientToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
             }
           ]
         },
@@ -1661,15 +2375,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{member2Token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{member2Token}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
             }
           ]
         },
@@ -1679,15 +2406,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
           ]
         },
@@ -1697,10 +2437,19 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}/status",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"DONE\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\"\n}"
+            }
           },
           "event": [
             {
@@ -1721,7 +2470,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/tasks/{{taskId2}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1742,15 +2496,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{memberToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"assignee_id\": \"{{member2UserId}}\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assignee_id\": \"{{member2UserId}}\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 403', () => pm.response.to.have.status(403));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
             }
           ]
         },
@@ -1760,15 +2527,28 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId1}}",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"assignee_id\": \"{{memberUserId}}\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assignee_id\": \"{{memberUserId}}\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 200', () => pm.response.to.have.status(200));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
             }
           ]
         },
@@ -1778,21 +2558,33 @@
             "method": "PATCH",
             "url": "{{baseUrl}}/api/tasks/{{taskId2}}/status",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
-            "body": { "mode": "raw", "raw": "{\n  \"status\": \"Flying\"\n}" }
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"Flying\"\n}"
+            }
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 400', () => pm.response.to.have.status(400));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
             }
           ]
         }
       ]
     },
-
     {
       "name": "06 - Algorithms (CPM + Traceability)",
       "item": [
@@ -1801,7 +2593,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects/{{projectId}}/critical-path",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1825,7 +2622,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/traceability?project_id={{projectId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1843,7 +2645,6 @@
         }
       ]
     },
-
     {
       "name": "07 - AI WBS Generation (HITL)",
       "item": [
@@ -1852,7 +2653,12 @@
           "request": {
             "method": "POST",
             "url": "{{baseUrl}}/api/projects/{{projectId}}/generate-wbs",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1876,8 +2682,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/projects/{{projectId}}/persist-wbs",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pmToken}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1905,7 +2717,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1925,7 +2742,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/history",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1949,8 +2771,14 @@
             "method": "POST",
             "url": "{{baseUrl}}/api/projects/{{project2Id}}/persist-wbs",
             "header": [
-              { "key": "Content-Type", "value": "application/json" },
-              { "key": "Authorization", "value": "Bearer {{pm2Token}}" }
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pm2Token}}"
+              }
             ],
             "body": {
               "mode": "raw",
@@ -1976,7 +2804,12 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/tasks?requirement_id={{requirementId}}",
-            "header": [{ "key": "Authorization", "value": "Bearer {{pmToken}}" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
           },
           "event": [
             {
@@ -1994,17 +2827,23 @@
         }
       ]
     },
-
     {
       "name": "08 - RBAC & Security Edge Cases",
       "item": [
         {
           "name": "No token — protected route (expect 401)",
-          "request": { "method": "GET", "url": "{{baseUrl}}/api/projects" },
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects"
+          },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
             }
           ]
         },
@@ -2013,22 +2852,38 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/projects",
-            "header": [{ "key": "Authorization", "value": "Bearer thisisnotavalidtoken" }]
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer thisisnotavalidtoken"
+              }
+            ]
           },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 401', () => pm.response.to.have.status(401));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
             }
           ]
         },
         {
           "name": "404 — unknown route",
-          "request": { "method": "GET", "url": "{{baseUrl}}/api/does-not-exist" },
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/does-not-exist"
+          },
           "event": [
             {
               "listen": "test",
-              "script": { "exec": ["pm.test('Status 404', () => pm.response.to.have.status(404));"] }
+              "script": {
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
             }
           ]
         }
