@@ -90,6 +90,55 @@ export async function criticalPath(req, res, next) {
 }
 
 /**
+ * GET /api/projects/:id/task-graph
+ *
+ * Returns the raw node/edge data for a project's task dependency graph —
+ * every non-deprecated task plus every dependency edge between them, with
+ * no CPM computation applied (that's what /critical-path is for). Follows
+ * the same two-query, both-sides-scoped pattern as criticalPath above.
+ */
+export async function getTaskGraph(req, res, next) {
+  try {
+    const { id: projectId } = req.params;
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(projectId)) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
+    const { data: tasks, error: tasksErr } = await supabase
+      .from("tasks")
+      .select(
+        `id, title, status, priority, estimated_hours, is_at_risk, is_ai_generated,
+         assignee:profiles!tasks_assignee_id_fkey(id, full_name),
+         requirement:requirements!inner(id, title, project_id)`,
+      )
+      .eq("requirement.project_id", projectId)
+      .eq("is_deprecated", false);
+
+    if (tasksErr) return next(tasksErr);
+
+    const taskIds = tasks.map((t) => t.id);
+    let dependencies = [];
+
+    if (taskIds.length) {
+      const { data: deps, error: depsErr } = await supabase
+        .from("task_dependencies")
+        .select("task_id, depends_on_task_id, is_ai_generated")
+        .in("task_id", taskIds)
+        .in("depends_on_task_id", taskIds);
+
+      if (depsErr) return next(depsErr);
+      dependencies = deps || [];
+    }
+
+    res.json({ tasks, dependencies });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * GET /api/traceability?project_id=
  *
  * Returns rows from the `traceability_matrix` view.

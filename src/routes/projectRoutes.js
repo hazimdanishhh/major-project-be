@@ -12,6 +12,7 @@
  * PATCH  /api/projects/:id          pm only
  * DELETE /api/projects/:id          pm only
  * GET    /api/projects/:id/critical-path
+ * GET    /api/projects/:id/task-graph
  * POST   /api/projects/:id/generate-wbs   pm only, AI-rate-limited
  * POST   /api/projects/:id/persist-wbs    pm only
  */
@@ -28,7 +29,10 @@ import {
   deleteProject,
   listProjectsPaginated,
 } from "../controllers/projectController.js";
-import { criticalPath } from "../controllers/algorithmController.js";
+import {
+  criticalPath,
+  getTaskGraph,
+} from "../controllers/algorithmController.js";
 import { aiLimiter } from "../middleware/rateLimiter.js";
 import { generateWBSPreview, persistWBS } from "../controllers/aiController.js";
 
@@ -110,5 +114,8 @@ router.post(
 
 // CPM — available to all authenticated roles
 router.get("/:id/critical-path", criticalPath);
+
+// Task dependency graph (nodes + edges, no CPM) — available to all authenticated roles
+router.get("/:id/task-graph", getTaskGraph);
 
 export default router;
