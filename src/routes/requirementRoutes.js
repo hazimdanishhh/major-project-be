@@ -74,12 +74,16 @@ router.use(requireAuth);
 router.get("/", listRequirements);
 router.post(
   "/",
-  requireRole("pm", "client"),
+  requireRole("client"),
   validate(CreateRequirementSchema),
   createRequirement,
 );
 
 router.get("/:id", getRequirement);
+// Both content-edit and status-transition modes share this route; pm drives
+// status transitions through their own analysis stages while client owns
+// content edits and the create/submit/validation-decision transitions — the
+// per-mode, per-role split is enforced inside updateRequirement itself.
 router.patch(
   "/:id",
   requireRole("pm", "client"),

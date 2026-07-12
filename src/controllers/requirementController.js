@@ -46,7 +46,11 @@
  */
 
 import supabase from "../config/supabase.js";
-import { validateTransition, flagImpactedTasks } from "../algorithms.js";
+import {
+  validateTransition,
+  flagImpactedTasks,
+  ForbiddenTransitionError,
+} from "../algorithms.js";
 import { getVisibleProjectIds } from "../utils/projectAccess.js";
 
 // ─── List ────────────────────────────────────────────────────────────────────
@@ -185,6 +189,16 @@ export async function updateRequirement(req, res, next) {
     const isContentChange = title !== undefined || description !== undefined;
     const isStatusChange = new_status && new_status !== current.status;
 
+    // ── Guard: content edits are client-only ───────────────────────────────
+    // Requirement content (title/description) is owned end-to-end by the
+    // client per the target design (PROCESS_FLOW.md Section 3); pm drives
+    // the requirement through analysis via status transitions only.
+    if (isContentChange && req.user.role !== "client") {
+      return res.status(403).json({
+        error: "Only the client may edit requirement content.",
+      });
+    }
+
     // ── Guard: disallow simultaneous status advance + content edit ────────
     // These are separate operations with different side-effects:
     //   - content edit on APPROVED/IMPLEMENTATION reverts status to UNDER_ANALYSIS
@@ -204,11 +218,12 @@ export async function updateRequirement(req, res, next) {
     // ── Step 1: Validate FSM transition if status change is requested ──────
     if (isStatusChange) {
       try {
-        validateTransition(current.status, new_status);
+        validateTransition(current.status, new_status, req.user.role);
         targetStatus = new_status;
         updates.status = targetStatus;
       } catch (fsmErr) {
-        return res.status(400).json({ error: fsmErr.message });
+        const status = fsmErr instanceof ForbiddenTransitionError ? 403 : 400;
+        return res.status(status).json({ error: fsmErr.message });
       }
     }
 

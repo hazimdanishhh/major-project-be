@@ -12,17 +12,28 @@
  *       and dependencies using real UUIDs. The temp_id→UUID mapping
  *       is resolved here. Auto-advances requirement to IMPLEMENTATION
  *       via the FSM validator and records the transition in the audit trail.
+ *
+ * Both handlers are scoped to projects the caller can see (getVisibleProjectIds,
+ * src/utils/projectAccess.js) before doing anything else — a pm may only
+ * generate/persist a WBS against their own project, mirroring the tenant
+ * isolation every other controller already applies.
  */
 
 import supabase from "../config/supabase.js";
 import generateWBS from "../services/llmService.js";
 import { validateTransition } from "../algorithms.js";
+import { getVisibleProjectIds } from "../utils/projectAccess.js";
 
 // ─── Phase 1: Generate preview ────────────────────────────────────────────────
 
 export async function generateWBSPreview(req, res, next) {
   try {
     const { id: projectId } = req.params;
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(projectId)) {
+      return res.status(404).json({ error: "Project not found." });
+    }
 
     const { data: project, error: projErr } = await supabase
       .from("projects")
@@ -102,6 +113,11 @@ export async function persistWBS(req, res, next) {
   try {
     const { id: projectId } = req.params;
     const { tasks } = req.body;
+
+    const visibleProjectIds = await getVisibleProjectIds(req.user);
+    if (!visibleProjectIds.includes(projectId)) {
+      return res.status(404).json({ error: "Project not found." });
+    }
 
     if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
       return res.status(400).json({ error: "tasks array is required." });

@@ -31,11 +31,36 @@ export const REQUIREMENT_TRANSITIONS = {
   COMPLETED: [],
 };
 
+// Which role may manually trigger each edge above (client drives create/submit/
+// validation-decision, pm drives the internal analysis stages) — see
+// PROCESS_FLOW.md Section 3. Every edge in REQUIREMENT_TRANSITIONS has an
+// entry here.
+export const REQUIREMENT_TRANSITION_ROLES = {
+  DRAFT: { SUBMITTED: ["client"] },
+  SUBMITTED: { UNDER_ANALYSIS: ["pm"] },
+  UNDER_ANALYSIS: { SPECIFICATION_DRAFTED: ["pm"] },
+  SPECIFICATION_DRAFTED: { CLIENT_VALIDATION: ["pm"] },
+  CLIENT_VALIDATION: { APPROVED: ["client"], UNDER_ANALYSIS: ["client"] },
+  APPROVED: { IMPLEMENTATION: ["pm"], UNDER_ANALYSIS: ["client"] },
+  IMPLEMENTATION: { COMPLETED: ["pm"], UNDER_ANALYSIS: ["client"] },
+};
+
+// Thrown by validateTransition when the FSM shape is valid but the calling
+// role isn't the one allowed to trigger this specific edge — distinct from
+// the generic Error thrown for a shape violation so callers can tell a
+// "wrong state" 400 apart from a "wrong role" 403.
+export class ForbiddenTransitionError extends Error {}
+
 /**
  * Throws if currentStatus -> newStatus is not an allowed FSM transition.
+ * When `role` is provided, also throws a ForbiddenTransitionError if that
+ * role isn't permitted to trigger this specific edge
+ * (REQUIREMENT_TRANSITION_ROLES). Omitting `role` skips that check entirely,
+ * so callers that only care about FSM shape (e.g. a unit test) can still
+ * call this with two arguments.
  * @returns {true} if valid
  */
-export function validateTransition(currentStatus, newStatus) {
+export function validateTransition(currentStatus, newStatus, role) {
   const allowed = REQUIREMENT_TRANSITIONS[currentStatus] || [];
   if (!allowed.includes(newStatus)) {
     throw new Error(
@@ -43,6 +68,17 @@ export function validateTransition(currentStatus, newStatus) {
         `Allowed next states: [${allowed.join(", ") || "none"}]`,
     );
   }
+
+  if (role !== undefined) {
+    const allowedRoles = REQUIREMENT_TRANSITION_ROLES[currentStatus]?.[newStatus] || [];
+    if (!allowedRoles.includes(role)) {
+      throw new ForbiddenTransitionError(
+        `Role '${role}' cannot perform the transition '${currentStatus}' -> '${newStatus}'. ` +
+          `Allowed role(s): [${allowedRoles.join(", ") || "none"}]`,
+      );
+    }
+  }
+
   return true;
 }
 
