@@ -43,6 +43,11 @@
  * member: projects with a task assigned to them), mirroring the scoping
  * projectController.js already applies to /api/projects. Out-of-scope
  * requirements report 404 (existence-hiding), not 403.
+ *
+ * Every requirement returned by listRequirements/getRequirement carries a
+ * `task_completion: {total, completed, percentage}` field (Phase 10),
+ * computed via calculateRequirementCompletion (algorithms.js) — deprecated
+ * and CANCELLED tasks are excluded from both the total and completed count.
  */
 
 import supabase from "../config/supabase.js";
@@ -50,8 +55,42 @@ import {
   validateTransition,
   flagImpactedTasks,
   ForbiddenTransitionError,
+  calculateRequirementCompletion,
 } from "../algorithms.js";
 import { getVisibleProjectIds } from "../utils/projectAccess.js";
+
+// Batch-fetches every task's status/is_deprecated for the given requirement
+// IDs in one query, groups them by requirement_id, and returns a
+// Map<requirement_id, ReturnType<calculateRequirementCompletion>> — used by
+// listRequirements so each requirement's task-completion % is computed with
+// a single extra query rather than one per requirement.
+async function getTaskCompletionByRequirementId(requirementIds) {
+  if (requirementIds.length === 0) return new Map();
+
+  const { data: tasks, error } = await supabase
+    .from("tasks")
+    .select("requirement_id, status, is_deprecated")
+    .in("requirement_id", requirementIds);
+
+  if (error) throw error;
+
+  const byRequirement = new Map();
+  for (const task of tasks || []) {
+    if (!byRequirement.has(task.requirement_id)) {
+      byRequirement.set(task.requirement_id, []);
+    }
+    byRequirement.get(task.requirement_id).push(task);
+  }
+
+  const completionByRequirement = new Map();
+  for (const requirementId of requirementIds) {
+    completionByRequirement.set(
+      requirementId,
+      calculateRequirementCompletion(byRequirement.get(requirementId) || []),
+    );
+  }
+  return completionByRequirement;
+}
 
 // ─── List ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +124,16 @@ export async function listRequirements(req, res, next) {
     const { data, error } = await query;
     if (error) return next(error);
 
-    res.json({ requirements: data });
+    // Attach each requirement's task-completion percentage (Phase 10)
+    const completionByRequirement = await getTaskCompletionByRequirementId(
+      (data || []).map((r) => r.id),
+    );
+    const requirementsWithCompletion = (data || []).map((r) => ({
+      ...r,
+      task_completion: completionByRequirement.get(r.id),
+    }));
+
+    res.json({ requirements: requirementsWithCompletion });
   } catch (err) {
     next(err);
   }
@@ -144,7 +192,7 @@ export async function getRequirement(req, res, next) {
         `*,
          created_by_user:profiles!requirements_created_by_fkey(id, full_name),
          requirement_specifications(*),
-         tasks(id, title, status, is_at_risk, is_ai_generated, assignee:profiles!tasks_assignee_id_fkey(id, full_name))`,
+         tasks(id, title, status, is_at_risk, is_deprecated, is_ai_generated, assignee:profiles!tasks_assignee_id_fkey(id, full_name))`,
       )
       .eq("id", id)
       .single();
@@ -157,7 +205,14 @@ export async function getRequirement(req, res, next) {
       return res.status(404).json({ error: "Requirement not found." });
     }
 
-    res.json({ requirement: data });
+    // Task-completion percentage (Phase 10) — computed directly from the
+    // tasks already embedded above, no extra query needed.
+    res.json({
+      requirement: {
+        ...data,
+        task_completion: calculateRequirementCompletion(data.tasks || []),
+      },
+    });
   } catch (err) {
     next(err);
   }

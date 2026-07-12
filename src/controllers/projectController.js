@@ -13,10 +13,46 @@
  * client_id = them; member sees projects where they're the assignee on at
  * least one task belonging to that project (tasks have no direct project_id
  * column — the path is tasks.requirement_id -> requirements.project_id).
+ *
+ * Every project returned by listProjectsPaginated/getProject carries a
+ * `requirement_completion: {total, completed, percentage}` field (Phase 10),
+ * computed via calculateProjectCompletion (algorithms.js) over that project's
+ * requirements' statuses.
  */
 
 import supabase from "../config/supabase.js";
 import { getMemberVisibleProjectIds } from "../utils/projectAccess.js";
+import { calculateProjectCompletion } from "../algorithms.js";
+
+// Batch-fetches every requirement's status for the given project IDs in one
+// query, groups them by project_id, and returns a Map<project_id,
+// ReturnType<calculateProjectCompletion>> — used by both listProjectsPaginated
+// and getProject so a project's completion % is computed identically in both.
+async function getRequirementCompletionByProjectId(projectIds) {
+  if (projectIds.length === 0) return new Map();
+
+  const { data: requirements, error } = await supabase
+    .from("requirements")
+    .select("project_id, status")
+    .in("project_id", projectIds);
+
+  if (error) throw error;
+
+  const byProject = new Map();
+  for (const req of requirements || []) {
+    if (!byProject.has(req.project_id)) byProject.set(req.project_id, []);
+    byProject.get(req.project_id).push(req);
+  }
+
+  const completionByProject = new Map();
+  for (const projectId of projectIds) {
+    completionByProject.set(
+      projectId,
+      calculateProjectCompletion(byProject.get(projectId) || []),
+    );
+  }
+  return completionByProject;
+}
 
 // Strips PostgREST .or() filter-syntax characters (`,`, `(`, `)`) from a
 // search term before interpolating it into a raw filter string — otherwise
@@ -89,9 +125,18 @@ export async function listProjectsPaginated(req, res, next) {
 
     if (error) return next(error);
 
+    // 7b. Attach each project's requirement-completion percentage (Phase 10)
+    const completionByProject = await getRequirementCompletionByProjectId(
+      (data || []).map((p) => p.id),
+    );
+    const dataWithCompletion = (data || []).map((p) => ({
+      ...p,
+      requirement_completion: completionByProject.get(p.id),
+    }));
+
     // 8. Return exactly what usePaginatedQuery expects!
     res.json({
-      data, // The array of projects
+      data: dataWithCompletion, // The array of projects
       totalCount: count, // The exact count for pagination math
     });
   } catch (err) {
@@ -157,7 +202,12 @@ export async function getProject(req, res, next) {
       }
     }
 
-    res.json({ project: data });
+    // Attach the project's requirement-completion percentage (Phase 10)
+    const completionByProject = await getRequirementCompletionByProjectId([id]);
+
+    res.json({
+      project: { ...data, requirement_completion: completionByProject.get(id) },
+    });
   } catch (err) {
     next(err);
   }

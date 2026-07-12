@@ -10,10 +10,11 @@
  *   7     Impact analysis (flag affected tasks)
  *   9     CPM  - Critical path (forward / backward pass)
  *   8.3   AI WBS sanitization (uses DFS internally)
+ *   10    Completion percentage tracking (project/requirement, Phase 10)
  *
  * Pure functions are exported separately from DB-touching functions so
- * the pure ones (DFS, CPM, FSM, sanitizeWBS) can be unit-tested with
- * zero mocking - see TESTING section of the implementation guide.
+ * the pure ones (DFS, CPM, FSM, sanitizeWBS, completion tracking) can be
+ * unit-tested with zero mocking - see TESTING_PLAN.md.
  * ---------------------------------------------------------------
  */
 
@@ -357,4 +358,47 @@ export function sanitizeWBS(rawTasks) {
       is_ai_generated: true,
     };
   });
+}
+
+// ===================================================================
+// 8. Completion Percentage Tracking (Phase 10)
+// ===================================================================
+/**
+ * A project's completion — the fraction of its requirements that are
+ * COMPLETED. Note: deleteRequirement soft-deletes by setting status to
+ * COMPLETED too, so a deleted requirement is indistinguishable from a
+ * genuinely-finished one here — a known, documented limitation, not a bug.
+ *
+ * @param {{status:string}[]} requirements
+ * @returns {{total:number, completed:number, percentage:number}}
+ */
+export function calculateProjectCompletion(requirements) {
+  const total = requirements.length;
+  const completed = requirements.filter((r) => r.status === "COMPLETED").length;
+  return {
+    total,
+    completed,
+    percentage: total === 0 ? 0 : Math.round((completed / total) * 100),
+  };
+}
+
+/**
+ * A requirement's completion — the fraction of its in-scope tasks that are
+ * DONE. Deprecated tasks (superseded by a requirement content-edit revert)
+ * and CANCELLED tasks are excluded from both the numerator and denominator
+ * entirely — cancelling is treated as descoping the work, not failing to
+ * finish it.
+ *
+ * @param {{status:string, is_deprecated?:boolean}[]} tasks
+ * @returns {{total:number, completed:number, percentage:number}}
+ */
+export function calculateRequirementCompletion(tasks) {
+  const scoped = tasks.filter((t) => !t.is_deprecated && t.status !== "CANCELLED");
+  const total = scoped.length;
+  const completed = scoped.filter((t) => t.status === "DONE").length;
+  return {
+    total,
+    completed,
+    percentage: total === 0 ? 0 : Math.round((completed / total) * 100),
+  };
 }
