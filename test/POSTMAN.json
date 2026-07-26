@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "major-project-be",
-    "description": "Complete API test collection for the AI-Augmented Project & Requirements Management System.\n\nRewritten (session 2) to match the actual implemented API, then updated (session 3) after registration was locked down to client-only.\n\nIMPORTANT — before running: pm and member accounts can no longer be created via this API (POST /api/auth/register only ever creates client accounts, by design — role is hardcoded server-side, not read from the request). You must manually create at least these four accounts directly in Supabase (dashboard or SQL) before running this collection, then fill in their credentials in the corresponding `existing*` collection variables: a pm account (`existingPmEmail`/`existingPmPassword`), a second pm account for isolation testing (`existingPm2Email`/`existingPm2Password`), a member account (`existingMemberEmail`/`existingMemberPassword`), and a second member account (`existingMember2Email`/`existingMember2Password`). Also set `supabaseUrl` and `supabaseAnonKey` from major-project-fe/.env if not already filled in, and `baseUrl` to your running backend (default http://localhost:4000).\n\nClient accounts are still created live by this collection on every run (self-registration remains open) — emails include a random suffix via a collection-level pre-request script, so re-running is safe without 409 collisions. Passwords used throughout satisfy the current policy (10-72 chars, upper+lower+number+special character).\n\nTesting order:\n1. Auth & Setup (client self-registration + validation; login for all roles)\n2. Projects & Access Control (CRUD + multi-tenant isolation)\n3. Requirements (FSM + versioning + impact analysis)\n4. Specifications (create/finalize + status-gate)\n5. Tasks (CRUD + DFS + BFS + ownership)\n6. Algorithms (CPM + Traceability)\n7. AI WBS Generation (HITL) — calls the real Groq API, requires GROQ_API_KEY configured\n8. RBAC & Security Edge Cases",
+    "description": "Complete API test collection for the Web-Based Project & Task Management System with Integrated Client Requirement Handling.\n\nIMPORTANT - Before running this collection: Manually create these 4 accounts in Supabase, and fill in their credentials in the corresponding `existing*` collection variables: a pm account (`existingPmEmail`/`existingPmPassword`), a second pm account for isolation testing (`existingPm2Email`/`existingPm2Password`), a member account (`existingMemberEmail`/`existingMemberPassword`), and a second member account (`existingMember2Email`/`existingMember2Password`). Also set `supabaseUrl` and `supabaseAnonKey` from major-project-fe/.env if not already filled in, and `baseUrl` to your running backend (default http://localhost:4000).\n\nClient accounts are still created live by this collection on every run (self-registration remains open) — emails include a random suffix via a collection-level pre-request script, so re-running is safe without 409 collisions. Passwords used throughout satisfy the current policy (10-72 chars, upper+lower+number+special character).\n\nTesting order:\n1. Auth & Setup (client self-registration + validation; login for all roles)\n2. Projects & Access Control (CRUD + multi-tenant isolation)\n3. Requirements (FSM + versioning + impact analysis)\n4. Specifications (create/finalize + status-gate)\n5. Tasks (CRUD + DFS + BFS + ownership)\n6. Algorithms (CPM + Traceability)\n7. AI WBS Generation (HITL) — calls the real Groq API, requires GROQ_API_KEY configured\n8. RBAC & Security Edge Cases\n9. Completion Rollups (Phase 14) — depends on tasks/requirements created in folders 4, 5 and 7, must run after them",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -22,6 +22,9 @@
       }
     }
   ],
+  "auth": {
+    "type": "noauth"
+  },
   "variable": [
     {
       "key": "baseUrl",
@@ -150,6 +153,16 @@
     },
     {
       "key": "taskId3",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "wbsTaskId1",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "wbsTaskId2",
       "value": "",
       "type": "string"
     },
@@ -1021,7 +1034,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('client2UserId', pm.response.json().user.id);"
+                  "const json = pm.response.json();",
+                  "if (json && json.user) pm.collectionVariables.set('client2UserId', json.user.id);"
                 ]
               }
             }
@@ -1127,7 +1141,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('project2Id', pm.response.json().project.id);"
+                  "const json = pm.response.json();",
+                  "if (json && json.project) pm.collectionVariables.set('project2Id', json.project.id);"
                 ]
               }
             }
@@ -1315,7 +1330,7 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{pmToken}}"
+                "value": "Bearer {{clientToken}}"
               }
             ],
             "body": {
@@ -1437,7 +1452,7 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{pmToken}}"
+                "value": "Bearer {{clientToken}}"
               }
             ],
             "body": {
@@ -1575,7 +1590,7 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{pmToken}}"
+                "value": "Bearer {{clientToken}}"
               }
             ],
             "body": {
@@ -1589,7 +1604,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('requirement2Id', pm.response.json().requirement.id);"
+                  "const json = pm.response.json();",
+                  "if (json && json.requirement) pm.collectionVariables.set('requirement2Id', json.requirement.id);"
                 ]
               }
             }
@@ -1662,7 +1678,7 @@
           ]
         },
         {
-          "name": "PATCH /api/requirements/:id/specs/:spec_id — finalize spec",
+          "name": "PATCH /api/requirements/:id/specs/:spec_id — edit content (status is system-managed, not settable here)",
           "request": {
             "method": "PATCH",
             "url": "{{baseUrl}}/api/requirements/{{requirementId}}/specs/{{specId}}",
@@ -1678,7 +1694,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"status\": \"FINAL\"\n}"
+              "raw": "{\n  \"description\": \"Implement JWT-based auth with Supabase. Revised to also cover session refresh.\",\n  \"status\": \"FINAL\"\n}"
             }
           },
           "event": [
@@ -1687,8 +1703,10 @@
               "script": {
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('Spec is FINAL', () => {",
-                  "  pm.expect(pm.response.json().spec.status).to.eql('FINAL');",
+                  "pm.test('Description updated; status ignored and stays DRAFT (system-managed)', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.spec.description).to.include('session refresh');",
+                  "  pm.expect(json.spec.status).to.eql('DRAFT');",
                   "});"
                 ]
               }
@@ -1803,7 +1821,7 @@
               },
               {
                 "key": "Authorization",
-                "value": "Bearer {{pmToken}}"
+                "value": "Bearer {{clientToken}}"
               }
             ],
             "body": {
@@ -2003,7 +2021,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('taskId1', pm.response.json().task.id);"
+                  "const json = pm.response.json();",
+                  "if (json && json.task) pm.collectionVariables.set('taskId1', json.task.id);"
                 ]
               }
             }
@@ -2035,7 +2054,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('taskId2', pm.response.json().task.id);"
+                  "const json = pm.response.json();",
+                  "if (json && json.task) pm.collectionVariables.set('taskId2', json.task.id);"
                 ]
               }
             }
@@ -2067,7 +2087,8 @@
               "script": {
                 "exec": [
                   "pm.test('Status 201', () => pm.response.to.have.status(201));",
-                  "pm.collectionVariables.set('taskId3', pm.response.json().task.id);"
+                  "const json = pm.response.json();",
+                  "if (json && json.task) pm.collectionVariables.set('taskId3', json.task.id);"
                 ]
               }
             }
@@ -2710,6 +2731,8 @@
                   "  const json = pm.response.json();",
                   "  pm.expect(json.created_task_ids.length).to.eql(2);",
                   "  pm.expect(json.dependency_count).to.eql(1);",
+                  "  pm.collectionVariables.set('wbsTaskId1', json.created_task_ids[0]);",
+                  "  pm.collectionVariables.set('wbsTaskId2', json.created_task_ids[1]);",
                   "});"
                 ]
               }
@@ -2886,6 +2909,396 @@
               "script": {
                 "exec": [
                   "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "09 - Completion Rollups (Phase 14)",
+      "item": [
+        {
+          "name": "DELETE /api/requirements/:id — archive the throwaway requirement2 (as PM)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/requirements/{{requirement2Id}}",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement archived to COMPLETED; project not yet complete', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.requirement.status).to.eql('COMPLETED');",
+                  "  pm.expect(json.project_completed).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /api/tasks/:id/status — Task2 → DONE (as PM), unblocks Task3",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId2}}/status",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Task3 unblocked; requirement not yet complete', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.unblocked).to.include(pm.collectionVariables.get('taskId3'));",
+                  "  pm.expect(json.requirement_completed).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /api/tasks/:id/status — Task3 → DONE (as PM)",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{taskId3}}/status",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement still not complete (WBS tasks remain)', () => {",
+                  "  pm.expect(pm.response.json().requirement_completed).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /api/tasks/:id/status — WBS Task1 → DONE (as PM), unblocks WBS Task2",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{wbsTaskId1}}/status",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('WBS Task2 unblocked; requirement not yet complete', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.unblocked).to.include(pm.collectionVariables.get('wbsTaskId2'));",
+                  "  pm.expect(json.requirement_completed).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /api/tasks/:id/status — WBS Task2 → DONE (as PM), last task: requirement AND project auto-complete",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/tasks/{{wbsTaskId2}}/status",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DONE\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Requirement and project both auto-complete in this one response', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.requirement_completed).to.not.eql(null);",
+                  "  pm.expect(json.requirement_completed.id).to.eql(pm.collectionVariables.get('requirementId'));",
+                  "  pm.expect(json.requirement_completed.project_id).to.eql(pm.collectionVariables.get('projectId'));",
+                  "  pm.expect(json.project_completed).to.not.eql(null);",
+                  "  pm.expect(json.project_completed.id).to.eql(pm.collectionVariables.get('projectId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/requirements/:id — confirm COMPLETED",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/requirements/{{requirementId}}",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Requirement is COMPLETED', () => {",
+                  "  pm.expect(pm.response.json().requirement.status).to.eql('COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/projects/:id — confirm COMPLETED",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Project is COMPLETED', () => {",
+                  "  pm.expect(pm.response.json().project.status).to.eql('COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/tasks — attempt against a COMPLETED requirement (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tasks",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"requirement_id\": \"{{requirementId}}\",\n  \"title\": \"Should be rejected — requirement is COMPLETED\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error mentions COMPLETED', () => {",
+                  "  pm.expect(pm.response.json().error).to.include('COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/requirements — attempt against a COMPLETED project (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{projectId}}\",\n  \"title\": \"Should be rejected — project is COMPLETED\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error mentions COMPLETED', () => {",
+                  "  pm.expect(pm.response.json().error).to.include('COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/projects/:id/persist-wbs — attempt against a COMPLETED requirement (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/projects/{{projectId}}/persist-wbs",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pmToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tasks\": [\n    {\n      \"temp_id\": \"t1\",\n      \"requirement_id\": \"{{requirement2Id}}\",\n      \"title\": \"Should be rejected — requirement2 is COMPLETED\",\n      \"estimated_hours\": 1,\n      \"priority\": \"LOW\",\n      \"depends_on_temp_ids\": [],\n      \"depends_on_existing_task_ids\": [],\n      \"is_ai_generated\": false\n    }\n  ]\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error names the COMPLETED requirement', () => {",
+                  "  pm.expect(pm.response.json().error).to.include('COMPLETED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "DELETE /api/projects/:id — archive project2 (as PM2)",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/projects/{{project2Id}}",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{pm2Token}}"
+              }
+            ]
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Project archived', () => {",
+                  "  pm.expect(pm.response.json().project.status).to.eql('ARCHIVED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /api/requirements — attempt against an ARCHIVED project (expect 400)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/requirements",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{clientToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"project_id\": \"{{project2Id}}\",\n  \"title\": \"Should be rejected — project2 is ARCHIVED\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Error mentions ARCHIVED', () => {",
+                  "  pm.expect(pm.response.json().error).to.include('ARCHIVED');",
+                  "});"
                 ]
               }
             }
