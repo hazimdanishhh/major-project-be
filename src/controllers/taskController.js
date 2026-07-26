@@ -31,7 +31,12 @@
  */
 
 import supabase from "../config/supabase.js";
-import { wouldCreateCycle, orchestrateWorkflow } from "../algorithms.js";
+import {
+  wouldCreateCycle,
+  orchestrateWorkflow,
+  maybeAutoCompleteRequirement,
+  maybeAutoCompleteProject,
+} from "../algorithms.js";
 import {
   getVisibleProjectIds,
   getVisibleRequirementIds,
@@ -96,7 +101,7 @@ export async function createTask(req, res, next) {
 
     const { data: requirement, error: reqErr } = await supabase
       .from("requirements")
-      .select("project_id")
+      .select("project_id, status")
       .eq("id", requirement_id)
       .single();
 
@@ -107,6 +112,12 @@ export async function createTask(req, res, next) {
     const visibleProjectIds = await getVisibleProjectIds(req.user);
     if (!visibleProjectIds.includes(requirement.project_id)) {
       return res.status(404).json({ error: "Requirement not found." });
+    }
+
+    if (requirement.status === "COMPLETED") {
+      return res.status(400).json({
+        error: "Cannot add a task to a COMPLETED requirement.",
+      });
     }
 
     const { data, error } = await supabase
@@ -253,7 +264,9 @@ export async function updateTaskStatus(req, res, next) {
     // Fetch current task to enforce transition rules
     const { data: current, error: fetchErr } = await supabase
       .from("tasks")
-      .select("status, assignee_id, requirement:requirements(project_id)")
+      .select(
+        "status, assignee_id, requirement_id, requirement:requirements(project_id)",
+      )
       .eq("id", id)
       .single();
 
@@ -324,7 +337,32 @@ export async function updateTaskStatus(req, res, next) {
       unblocked = await orchestrateWorkflow(supabase, id);
     }
 
-    res.json({ task: updated, unblocked });
+    // Completion rollup (Phase 14): DONE and CANCELLED can both push a
+    // requirement to 100% — calculateRequirementCompletion excludes
+    // CANCELLED tasks from the denominator entirely, so cancelling the last
+    // non-done task completes the requirement just as finishing it would.
+    let requirementCompleted = null;
+    let projectCompleted = null;
+    if (status === "DONE" || status === "CANCELLED") {
+      requirementCompleted = await maybeAutoCompleteRequirement(
+        supabase,
+        current.requirement_id,
+        req.user.id,
+      );
+      if (requirementCompleted) {
+        projectCompleted = await maybeAutoCompleteProject(
+          supabase,
+          requirementCompleted.project_id,
+        );
+      }
+    }
+
+    res.json({
+      task: updated,
+      unblocked,
+      requirement_completed: requirementCompleted,
+      project_completed: projectCompleted,
+    });
   } catch (err) {
     next(err);
   }

@@ -56,6 +56,7 @@ import {
   flagImpactedTasks,
   ForbiddenTransitionError,
   calculateRequirementCompletion,
+  maybeAutoCompleteProject,
 } from "../algorithms.js";
 import { getVisibleProjectIds } from "../utils/projectAccess.js";
 
@@ -148,6 +149,22 @@ export async function createRequirement(req, res, next) {
     const visibleProjectIds = await getVisibleProjectIds(req.user);
     if (!visibleProjectIds.includes(project_id)) {
       return res.status(404).json({ error: "Project not found." });
+    }
+
+    const { data: project, error: projErr } = await supabase
+      .from("projects")
+      .select("status")
+      .eq("id", project_id)
+      .single();
+
+    if (projErr || !project) {
+      return res.status(404).json({ error: "Project not found." });
+    }
+
+    if (["COMPLETED", "ARCHIVED"].includes(project.status)) {
+      return res.status(400).json({
+        error: `Cannot add a requirement to a ${project.status} project.`,
+      });
     }
 
     const { data, error } = await supabase
@@ -366,7 +383,18 @@ export async function updateRequirement(req, res, next) {
       }
     }
 
-    res.json({ requirement: updated });
+    // ── Step 6: Project auto-complete rollup (Phase 14) ────────────────────
+    // A manual "Mark Complete" click can equally be the transition that
+    // pushes the parent project to 100% requirement-completion.
+    let projectCompleted = null;
+    if (targetStatus === "COMPLETED" && targetStatus !== current.status) {
+      projectCompleted = await maybeAutoCompleteProject(
+        supabase,
+        current.project_id,
+      );
+    }
+
+    res.json({ requirement: updated, project_completed: projectCompleted });
   } catch (err) {
     next(err);
   }
@@ -423,6 +451,7 @@ export async function deleteRequirement(req, res, next) {
     if (reqErr) return next(reqErr);
 
     // 3. Record the status change in the audit trail
+    let projectCompleted = null;
     if (current.status !== "COMPLETED") {
       await supabase.from("requirement_status_history").insert({
         requirement_id: id,
@@ -430,11 +459,23 @@ export async function deleteRequirement(req, res, next) {
         new_status: "COMPLETED",
         changed_by: req.user.id,
       });
+
+      // 4. Project auto-complete rollup (Phase 14) — applied here too for
+      // consistency with the accepted soft-delete/COMPLETED ambiguity
+      // (README.md's Completion Tracking section): since an archived
+      // requirement already counts identically to a finished one in
+      // calculateProjectCompletion, the rollup is applied uniformly rather
+      // than only at the "genuine" completion trigger points.
+      projectCompleted = await maybeAutoCompleteProject(
+        supabase,
+        current.project_id,
+      );
     }
 
     res.json({
       message: "Requirement and its tasks have been archived.",
       requirement: deleted,
+      project_completed: projectCompleted,
     });
   } catch (err) {
     next(err);

@@ -11,6 +11,7 @@
  *   9     CPM  - Critical path (forward / backward pass)
  *   8.3   AI WBS sanitization (uses DFS internally)
  *   10    Completion percentage tracking (project/requirement, Phase 10)
+ *   14    Automated completion rollups (task -> requirement -> project)
  *
  * Pure functions are exported separately from DB-touching functions so
  * the pure ones (DFS, CPM, FSM, sanitizeWBS, completion tracking) can be
@@ -401,4 +402,119 @@ export function calculateRequirementCompletion(tasks) {
     completed,
     percentage: total === 0 ? 0 : Math.round((completed / total) * 100),
   };
+}
+
+// ===================================================================
+// 9. Automated Completion Rollups (Phase 14)
+// ===================================================================
+/**
+ * If `requirementId` is currently IMPLEMENTATION and every one of its
+ * in-scope tasks (same DONE/CANCELLED-excluded scoping as
+ * calculateRequirementCompletion) is DONE, advances it to COMPLETED and
+ * records the transition in requirement_status_history. No-op if the
+ * requirement isn't IMPLEMENTATION, has zero in-scope tasks, or isn't yet
+ * 100% complete — an empty task set must never auto-complete.
+ *
+ * `changedBy` is the user whose action (completing/cancelling a task)
+ * tipped the requirement over — the audit trail credits that human action
+ * directly rather than a synthetic "system" actor.
+ *
+ * @returns {Promise<{id:string, project_id:string}|null>} the completed
+ *   requirement's id/project_id if it was just auto-completed, else null.
+ */
+export async function maybeAutoCompleteRequirement(db, requirementId, changedBy) {
+  const { data: requirement, error: reqErr } = await db
+    .from("requirements")
+    .select("status, project_id")
+    .eq("id", requirementId)
+    .single();
+
+  if (reqErr || !requirement || requirement.status !== "IMPLEMENTATION") {
+    return null;
+  }
+
+  const { data: tasks, error: tasksErr } = await db
+    .from("tasks")
+    .select("status, is_deprecated")
+    .eq("requirement_id", requirementId);
+
+  if (tasksErr) throw tasksErr;
+
+  const completion = calculateRequirementCompletion(tasks || []);
+  if (completion.total === 0 || completion.percentage !== 100) return null;
+
+  // System-triggered edge — no role check (mirrors persistWBS's
+  // APPROVED -> IMPLEMENTATION auto-advance, which calls validateTransition
+  // with no role argument for the same reason: there's no human actor
+  // choosing this specific transition to validate against).
+  validateTransition("IMPLEMENTATION", "COMPLETED");
+
+  const { data: updated, error: updateErr } = await db
+    .from("requirements")
+    .update({ status: "COMPLETED", updated_at: new Date().toISOString() })
+    .eq("id", requirementId)
+    .eq("status", "IMPLEMENTATION") // re-check at write time to avoid a race
+    .select("id, project_id")
+    .single();
+
+  if (updateErr || !updated) return null; // 0 rows changed - another request beat us to it
+
+  await db.from("requirement_status_history").insert({
+    requirement_id: requirementId,
+    old_status: "IMPLEMENTATION",
+    new_status: "COMPLETED",
+    changed_by: changedBy,
+  });
+
+  return updated;
+}
+
+/**
+ * If `projectId` is currently ACTIVE and every one of its requirements is
+ * COMPLETED, advances the project to COMPLETED. No-op if the project isn't
+ * ACTIVE, has zero requirements, or isn't yet 100% complete. A PM's
+ * deliberate ON_HOLD/ARCHIVED call is never silently overridden by this.
+ *
+ * Projects have no status_history table, so no audit row is written here —
+ * matches updateProject/deleteProject, which also write `status` directly
+ * with no history log.
+ *
+ * Inherits calculateProjectCompletion's known, documented limitation: a
+ * soft-deleted requirement (deleteRequirement sets status: COMPLETED on
+ * archive) counts identically to a genuinely-finished one, so a project
+ * whose requirements were all archived rather than finished can also
+ * auto-complete here. Accepted, not fixed (see README.md's Completion
+ * Tracking section).
+ *
+ * @returns {Promise<{id:string}|null>}
+ */
+export async function maybeAutoCompleteProject(db, projectId) {
+  const { data: project, error: projErr } = await db
+    .from("projects")
+    .select("status")
+    .eq("id", projectId)
+    .single();
+
+  if (projErr || !project || project.status !== "ACTIVE") return null;
+
+  const { data: requirements, error: reqErr } = await db
+    .from("requirements")
+    .select("status")
+    .eq("project_id", projectId);
+
+  if (reqErr) throw reqErr;
+
+  const completion = calculateProjectCompletion(requirements || []);
+  if (completion.total === 0 || completion.percentage !== 100) return null;
+
+  const { data: updated, error: updateErr } = await db
+    .from("projects")
+    .update({ status: "COMPLETED", updated_at: new Date().toISOString() })
+    .eq("id", projectId)
+    .eq("status", "ACTIVE") // re-check at write time to avoid a race
+    .select("id")
+    .single();
+
+  if (updateErr || !updated) return null;
+  return updated;
 }

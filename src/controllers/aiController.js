@@ -154,6 +154,17 @@ export async function persistWBS(req, res, next) {
       });
     }
 
+    const completedReqIds = incomingReqIds.filter(
+      (rid) => reqStatusMap.get(rid) === "COMPLETED",
+    );
+    if (completedReqIds.length > 0) {
+      return res.status(400).json({
+        error:
+          `Cannot add tasks to COMPLETED requirement(s): ` +
+          completedReqIds.join(", "),
+      });
+    }
+
     // 1. Insert all tasks in a single bulk insert — one INSERT statement is
     // atomic, so either every task is created or none are (no orphaned
     // partial-WBS rows if one task's data is bad).
