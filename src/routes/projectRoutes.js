@@ -15,6 +15,9 @@
  * GET    /api/projects/:id/task-graph
  * POST   /api/projects/:id/generate-wbs   pm only, AI-rate-limited
  * POST   /api/projects/:id/persist-wbs    pm only
+ * GET    /api/projects/:id/members            — list a project's team
+ * POST   /api/projects/:id/members             pm only, owner only
+ * DELETE /api/projects/:id/members/:memberId   pm only, owner only
  */
 
 import express from "express";
@@ -29,6 +32,11 @@ import {
   deleteProject,
   listProjectsPaginated,
 } from "../controllers/projectController.js";
+import {
+  listProjectMembers,
+  addProjectMember,
+  removeProjectMember,
+} from "../controllers/projectMemberController.js";
 import {
   criticalPath,
   getTaskGraph,
@@ -58,6 +66,10 @@ const ListProjectsQuerySchema = z
     sortOrder: z.enum(["ascending", "descending"]).default("descending"),
   })
   .passthrough(); // lets ?status=ACTIVE-style dynamic filters keep flowing through
+
+const AddProjectMemberSchema = z.object({
+  member_id: z.string().uuid(),
+});
 
 const PersistGlobalWBSSchema = z.object({
   tasks: z
@@ -96,6 +108,16 @@ router.patch(
   updateProject,
 );
 router.delete("/:id", requireRole("pm"), deleteProject);
+
+// Project team membership
+router.get("/:id/members", listProjectMembers);
+router.post(
+  "/:id/members",
+  requireRole("pm"),
+  validate(AddProjectMemberSchema),
+  addProjectMember,
+);
+router.delete("/:id/members/:memberId", requireRole("pm"), removeProjectMember);
 
 // Global AI WBS Generation
 router.post(

@@ -40,6 +40,7 @@ import {
 import {
   getVisibleProjectIds,
   getVisibleRequirementIds,
+  isProjectMember,
 } from "../utils/projectAccess.js";
 
 // ─── List ────────────────────────────────────────────────────────────────────
@@ -118,6 +119,18 @@ export async function createTask(req, res, next) {
       return res.status(400).json({
         error: "Cannot add a task to a COMPLETED requirement.",
       });
+    }
+
+    if (assignee_id) {
+      const isMember = await isProjectMember(
+        requirement.project_id,
+        assignee_id,
+      );
+      if (!isMember) {
+        return res.status(400).json({
+          error: "Assignee must be a member of this project.",
+        });
+      }
     }
 
     const { data, error } = await supabase
@@ -216,6 +229,18 @@ export async function updateTask(req, res, next) {
       priority,
       is_at_risk,
     } = req.body;
+
+    if (assignee_id !== undefined && assignee_id !== null) {
+      const isMember = await isProjectMember(
+        current.requirement?.project_id,
+        assignee_id,
+      );
+      if (!isMember) {
+        return res.status(400).json({
+          error: "Assignee must be a member of this project.",
+        });
+      }
+    }
 
     const updates = { updated_at: new Date().toISOString() };
     if (title !== undefined) updates.title = title;

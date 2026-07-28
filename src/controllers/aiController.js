@@ -22,7 +22,7 @@
 import supabase from "../config/supabase.js";
 import generateWBS from "../services/llmService.js";
 import { validateTransition } from "../algorithms.js";
-import { getVisibleProjectIds } from "../utils/projectAccess.js";
+import { getVisibleProjectIds, isProjectMember } from "../utils/projectAccess.js";
 
 // ─── Phase 1: Generate preview ────────────────────────────────────────────────
 
@@ -163,6 +163,21 @@ export async function persistWBS(req, res, next) {
           `Cannot add tasks to COMPLETED requirement(s): ` +
           completedReqIds.join(", "),
       });
+    }
+
+    // 0b. Every assignee named in the payload must be on this project's team
+    // (project_members) — same rule taskController.js's createTask/updateTask
+    // enforce, so AI WBS persistence can't be used to bypass it.
+    const incomingAssigneeIds = [
+      ...new Set(tasks.map((t) => t.assignee_id).filter(Boolean)),
+    ];
+    for (const assigneeId of incomingAssigneeIds) {
+      const isMember = await isProjectMember(projectId, assigneeId);
+      if (!isMember) {
+        return res.status(400).json({
+          error: `Assignee ${assigneeId} is not a member of this project.`,
+        });
+      }
     }
 
     // 1. Insert all tasks in a single bulk insert — one INSERT statement is
