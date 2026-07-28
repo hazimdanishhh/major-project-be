@@ -21,7 +21,7 @@
 
 import supabase from "../config/supabase.js";
 import generateWBS from "../services/llmService.js";
-import { validateTransition } from "../algorithms.js";
+import { maybeAutoStartImplementation } from "../algorithms.js";
 import { getVisibleProjectIds, isProjectMember } from "../utils/projectAccess.js";
 
 // ─── Phase 1: Generate preview ────────────────────────────────────────────────
@@ -245,44 +245,12 @@ export async function persistWBS(req, res, next) {
       if (depErr) return next(depErr);
     }
 
-    // 3. Advance status only for requirements that are currently APPROVED,
-    // routed through the FSM validator for consistency with
-    // requirementController.updateRequirement, and only record audit
-    // history for requirements that actually transitioned.
-    const auditRows = [];
-
+    // 3. Advance status for requirements that are currently APPROVED, via
+    // the same shared helper createTask uses for manually-created tasks —
+    // a requirement's first task (however it got there) is what starts
+    // implementation, not a separate AI-WBS-only code path.
     for (const reqId of incomingReqIds) {
-      const currentStatus = reqStatusMap.get(reqId);
-      if (currentStatus !== "APPROVED") continue; // nothing to advance
-
-      try {
-        validateTransition(currentStatus, "IMPLEMENTATION");
-      } catch {
-        continue; // defensive; should be unreachable given the guard above
-      }
-
-      const { data: updatedRows, error: updateErr } = await supabase
-        .from("requirements")
-        .update({
-          status: "IMPLEMENTATION",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", reqId)
-        .eq("status", "APPROVED") // re-check at write time to avoid a race
-        .select("id");
-
-      if (updateErr || !updatedRows || updatedRows.length === 0) continue; // 0 rows changed — skip history
-
-      auditRows.push({
-        requirement_id: reqId,
-        old_status: "APPROVED",
-        new_status: "IMPLEMENTATION",
-        changed_by: req.user.id,
-      });
-    }
-
-    if (auditRows.length > 0) {
-      await supabase.from("requirement_status_history").insert(auditRows);
+      await maybeAutoStartImplementation(supabase, reqId, req.user.id);
     }
 
     res.status(201).json({

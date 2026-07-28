@@ -35,16 +35,22 @@ export const REQUIREMENT_TRANSITIONS = {
 
 // Which role may manually trigger each edge above (client drives create/submit/
 // validation-decision, pm drives the internal analysis stages) — see
-// PROCESS_FLOW.md Section 3. Every edge in REQUIREMENT_TRANSITIONS has an
-// entry here.
+// PROCESS_FLOW.md Section 3. Not every edge in REQUIREMENT_TRANSITIONS has
+// an entry here: APPROVED -> IMPLEMENTATION and IMPLEMENTATION -> COMPLETED
+// are system-triggered only (maybeAutoStartImplementation/
+// maybeAutoCompleteRequirement), never a human action, so no role may
+// trigger them manually — validateTransition's role-check rejects any
+// human-driven attempt at those two edges (a missing entry resolves to an
+// empty allowed-roles list), while the automatic helpers call
+// validateTransition with no role argument at all, skipping this check.
 export const REQUIREMENT_TRANSITION_ROLES = {
   DRAFT: { SUBMITTED: ["client"] },
   SUBMITTED: { UNDER_ANALYSIS: ["pm"] },
   UNDER_ANALYSIS: { SPECIFICATION_DRAFTED: ["pm"] },
   SPECIFICATION_DRAFTED: { CLIENT_VALIDATION: ["pm"] },
   CLIENT_VALIDATION: { APPROVED: ["client"], UNDER_ANALYSIS: ["client"] },
-  APPROVED: { IMPLEMENTATION: ["pm"], UNDER_ANALYSIS: ["client"] },
-  IMPLEMENTATION: { COMPLETED: ["pm"], UNDER_ANALYSIS: ["client"] },
+  APPROVED: { UNDER_ANALYSIS: ["client"] },
+  IMPLEMENTATION: { UNDER_ANALYSIS: ["client"] },
 };
 
 // Thrown by validateTransition when the FSM shape is valid but the calling
@@ -463,6 +469,56 @@ export async function maybeAutoCompleteRequirement(db, requirementId, changedBy)
     requirement_id: requirementId,
     old_status: "IMPLEMENTATION",
     new_status: "COMPLETED",
+    changed_by: changedBy,
+  });
+
+  return updated;
+}
+
+/**
+ * If `requirementId` is currently APPROVED, advances it to IMPLEMENTATION
+ * and records the transition in requirement_status_history. Re-checks
+ * status at write time, so it's safe to call unconditionally on every task
+ * creation (manual or AI-WBS) rather than only "the first one" — the
+ * moment a requirement gains its first task is the signal that real
+ * implementation work has begun; every call after that is a no-op.
+ *
+ * `changedBy` is the user who created the task that tipped this over — the
+ * audit trail credits that human action directly, same pattern as
+ * maybeAutoCompleteRequirement.
+ *
+ * @returns {Promise<{id:string, project_id:string}|null>} the advanced
+ *   requirement's id/project_id if it was just advanced, else null.
+ */
+export async function maybeAutoStartImplementation(db, requirementId, changedBy) {
+  const { data: requirement, error: reqErr } = await db
+    .from("requirements")
+    .select("status, project_id")
+    .eq("id", requirementId)
+    .single();
+
+  if (reqErr || !requirement || requirement.status !== "APPROVED") {
+    return null;
+  }
+
+  // System-triggered edge — no role check (mirrors maybeAutoCompleteRequirement's
+  // IMPLEMENTATION -> COMPLETED auto-advance below).
+  validateTransition("APPROVED", "IMPLEMENTATION");
+
+  const { data: updated, error: updateErr } = await db
+    .from("requirements")
+    .update({ status: "IMPLEMENTATION", updated_at: new Date().toISOString() })
+    .eq("id", requirementId)
+    .eq("status", "APPROVED") // re-check at write time to avoid a race
+    .select("id, project_id")
+    .single();
+
+  if (updateErr || !updated) return null; // 0 rows changed - another request beat us to it
+
+  await db.from("requirement_status_history").insert({
+    requirement_id: requirementId,
+    old_status: "APPROVED",
+    new_status: "IMPLEMENTATION",
     changed_by: changedBy,
   });
 

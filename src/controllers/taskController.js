@@ -36,6 +36,7 @@ import {
   orchestrateWorkflow,
   maybeAutoCompleteRequirement,
   maybeAutoCompleteProject,
+  maybeAutoStartImplementation,
 } from "../algorithms.js";
 import {
   getVisibleProjectIds,
@@ -149,7 +150,16 @@ export async function createTask(req, res, next) {
       .single();
 
     if (error) return next(error);
-    res.status(201).json({ task: data });
+
+    // A requirement's first task (manual or AI-WBS) is the signal that real
+    // implementation work has begun — no-op once it's already past APPROVED.
+    const requirementStarted = await maybeAutoStartImplementation(
+      supabase,
+      requirement_id,
+      req.user.id,
+    );
+
+    res.status(201).json({ task: data, requirement_started: requirementStarted });
   } catch (err) {
     next(err);
   }
